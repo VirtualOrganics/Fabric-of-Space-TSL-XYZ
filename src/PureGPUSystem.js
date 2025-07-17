@@ -20,10 +20,10 @@ export class PureGPUSystem {
             volumeResolution: 256,
             numPoints: 100,
             physicsSettings: {
-                threshold: 12,
+                threshold: 32,  // Calibrated based on observed average acute count
                 mode: 'balanced',
-                growthRate: 0.1,
-                shrinkRate: 0.05,
+                growthRate: 0.2,  // Increased for more visible movement
+                shrinkRate: 0.1,  // Increased for more visible movement
                 momentum: 0.95,
                 damping: 0.02,
                 maxSpeed: 2.0
@@ -83,7 +83,52 @@ export class PureGPUSystem {
         // Initialize volume renderer
         this.volumeRenderer = new TSLVolumeRenderer(this.scene);
         
+        // Add debug key listener
+        this.initializeDebugSystem();
+        
         console.log('✅ Pure GPU system initialized');
+    }
+    
+    /**
+     * Initialize debug system for reading GPU data
+     */
+    initializeDebugSystem() {
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'd') { // 'd' for debug
+                console.log("Reading acute count buffer...");
+                
+                // Read the acute count buffer from GPU using WebGPU readback
+                this.readAcuteCountBuffer().then((acuteCounts) => {
+                    if (acuteCounts && acuteCounts.length > 0) {
+                        let sum = 0;
+                        let min = Infinity;
+                        let max = 0;
+                        
+                        for (let i = 0; i < this.settings.numPoints; i++) {
+                            const count = acuteCounts[i];
+                            sum += count;
+                            if (count < min) min = count;
+                            if (count > max) max = count;
+                        }
+                        
+                        const average = sum / this.settings.numPoints;
+                        console.log(`--- Acute Count Stats ---`);
+                        console.log(`Average: ${average.toFixed(2)}`);
+                        console.log(`Min: ${min}`);
+                        console.log(`Max: ${max}`);
+                        console.log(`Total cells: ${this.settings.numPoints}`);
+                        console.log(`-------------------------`);
+                        
+                        // Also log some example values for debugging
+                        console.log(`First 10 values: ${acuteCounts.slice(0, 10).join(', ')}`);
+                    } else {
+                        console.error("Failed to read buffer. Result has no data.");
+                    }
+                }).catch(error => {
+                    console.error("Error reading buffer:", error);
+                });
+            }
+        });
     }
     
     /**
@@ -92,22 +137,21 @@ export class PureGPUSystem {
     async initializeGPUBuffers() {
         const numPoints = this.settings.numPoints;
         
-        // Seed buffer: position (vec3) + velocity (vec3) + radius (float) + padding = 8 floats per seed
+        // Seed buffer: position (vec4) + velocity (vec3) + radius (float) = 8 floats per seed
         const seedData = new Float32Array(numPoints * 8);
         for (let i = 0; i < numPoints; i++) {
             const offset = i * 8;
-            // Random position
-            seedData[offset + 0] = Math.random() * 2 - 1;
-            seedData[offset + 1] = Math.random() * 2 - 1;
-            seedData[offset + 2] = Math.random() * 2 - 1;
-            // Zero velocity
-            seedData[offset + 3] = 0;
-            seedData[offset + 4] = 0;
-            seedData[offset + 5] = 0;
+            // Random position (vec4f - xyz + w component)
+            seedData[offset + 0] = Math.random() * 2 - 1;  // x
+            seedData[offset + 1] = Math.random() * 2 - 1;  // y
+            seedData[offset + 2] = Math.random() * 2 - 1;  // z
+            seedData[offset + 3] = 1.0;  // w component (typically 1.0 for positions)
+            // Zero velocity (vec3f)
+            seedData[offset + 4] = 0;  // vx
+            seedData[offset + 5] = 0;  // vy
+            seedData[offset + 6] = 0;  // vz
             // Initial radius
-            seedData[offset + 6] = 0.5;
-            // Padding
-            seedData[offset + 7] = 0;
+            seedData[offset + 7] = 0.5;
         }
         this.seedBuffer = new StorageBuffer(new Float32Attribute(seedData, 8));
         
@@ -157,7 +201,7 @@ export class PureGPUSystem {
         // Create analysis compute shader
         const analysisShaderCode = `
             struct Seed {
-                position: vec3f,
+                position: vec4f,  // FIXED: Changed from vec3f to match actual data layout
                 velocity: vec3f,
                 radius: f32,
                 padding: f32
@@ -235,8 +279,8 @@ export class PureGPUSystem {
                             let cellB = uniqueCells[j];
                             
                             if (cellA < arrayLength(&seeds) && cellB < arrayLength(&seeds)) {
-                                let vecA = normalize(seeds[cellA].position - junctionPos);
-                                let vecB = normalize(seeds[cellB].position - junctionPos);
+                                let vecA = normalize(seeds[cellA].position.xyz - junctionPos);
+                                let vecB = normalize(seeds[cellB].position.xyz - junctionPos);
                                 let angle = acos(clamp(dot(vecA, vecB), -1.0, 1.0));
                                 
                                 // If angle is acute (< 90 degrees)
@@ -353,7 +397,7 @@ export class PureGPUSystem {
         // Create physics compute shader
         const physicsShaderCode = `
             struct Seed {
-                position: vec3f,
+                position: vec4f,  // FIXED: Changed from vec3f to match actual data layout
                 velocity: vec3f,
                 radius: f32,
                 padding: f32
@@ -411,7 +455,7 @@ export class PureGPUSystem {
                 if (centroidData.voxelCount > 0.0) {
                     // The centroid has already been finalized to world coordinates
                     let centroid = centroidData.positionSum;
-                    let delta = centroid - seed.position;
+                    let delta = centroid - seed.position.xyz;  // Extract xyz from vec4
                     
                     // Only proceed if we have a valid direction vector
                     let distance = length(delta);
@@ -465,10 +509,10 @@ export class PureGPUSystem {
                         }
                         
                         // Update position
-                        seed.position = seed.position + seed.velocity * settings.deltaTime;
+                        seed.position.xyz = seed.position.xyz + seed.velocity * settings.deltaTime;
                         
                         // Keep seeds in bounds [-1, 1]
-                        seed.position = clamp(seed.position, vec3f(-1.0), vec3f(1.0));
+                        seed.position.xyz = clamp(seed.position.xyz, vec3f(-1.0), vec3f(1.0));
                     }
                 }
                 
@@ -652,6 +696,39 @@ export class PureGPUSystem {
         if (this.frameCount % 30 === 0) {
             await this.readStatistics();
         }
+    }
+    
+    /**
+     * Read acute count buffer from GPU
+     */
+    async readAcuteCountBuffer() {
+        const device = this.device;
+        
+        // Create a staging buffer for readback
+        const stagingBuffer = device.createBuffer({
+            size: this.settings.numPoints * 4, // 4 bytes per uint32
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+        });
+        
+        // Copy from GPU buffer to staging buffer
+        const commandEncoder = device.createCommandEncoder();
+        commandEncoder.copyBufferToBuffer(
+            this.acuteCountBuffer.buffer,
+            0,
+            stagingBuffer,
+            0,
+            this.settings.numPoints * 4
+        );
+        device.queue.submit([commandEncoder.finish()]);
+        
+        // Wait for GPU to finish and map the buffer
+        await stagingBuffer.mapAsync(GPUMapMode.READ);
+        const arrayBuffer = stagingBuffer.getMappedRange();
+        const data = new Uint32Array(arrayBuffer.slice(0));
+        stagingBuffer.unmap();
+        stagingBuffer.destroy();
+        
+        return data;
     }
     
     /**
