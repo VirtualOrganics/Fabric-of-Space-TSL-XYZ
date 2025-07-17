@@ -249,9 +249,7 @@ export class AnalysisCompute {
         // Create uniform buffer for parameters
         const uniformData = new Uint32Array([
             this.volumeSize,  // volumeSize
-            numSeeds,         // numSeeds
-            0,                // padding
-            0                 // padding
+            numSeeds          // numSeeds
         ]);
         
         const uniformBuffer = this.device.createBuffer({
@@ -529,169 +527,167 @@ export class AnalysisCompute {
      */
     getAnalysisComputeShader() {
         return `
-            // Analysis uniform buffer with proper typing
-            struct AnalysisUniforms {
-                volumeSize : u32,
-                numSeeds   : u32,
-                padding1   : u32,
-                padding2   : u32
-            };
+// 1) Uniform parameters
+struct AnalysisUniforms {
+  volumeSize : u32;
+  numSeeds   : u32;
+};
 
-            // Seed data structure with proper typing
-            struct SeedData {
-                position   : vec3<f32>,
-                centroid   : vec3<f32>,
-                acuteCount : f32,
-                voxelCount : f32
-            };
+// 2) Seed data layout (must match JS seedBuffer layout)
+struct SeedData {
+  position   : vec3<f32>;
+  centroid   : vec3<f32>;
+  acuteCount : f32;
+  voxelCount : f32;
+};
 
-            // Centroid calculation data with atomic counters
-            struct CentroidData {
-                positionSumX : atomic<u32>,
-                positionSumY : atomic<u32>,
-                positionSumZ : atomic<u32>,
-                voxelCount   : atomic<u32>
-            };
+// 3) Centroid accumulation with atomics
+struct CentroidData {
+  positionSumX : atomic<u32>;
+  positionSumY : atomic<u32>;
+  positionSumZ : atomic<u32>;
+  voxelCount   : atomic<u32>;
+};
 
-            // Properly typed binding declarations
-            @group(0) @binding(0)
-            var jfaTexture : texture_storage_3d<r32uint, read>;
+// 4) Bindings
+@group(0) @binding(0)
+var jfaTexture : texture_storage_3d<r32uint, read>;
 
-            @group(0) @binding(1)
-            var<storage, read_write> seedBuffer : array<SeedData>;
+@group(0) @binding(1)
+var<storage, read_write> seedBuffer       : array<SeedData>;
 
-            @group(0) @binding(2)
-            var<storage, read_write> centroidData : array<CentroidData>;
+@group(0) @binding(2)
+var<storage, read_write> centroidData     : array<CentroidData>;
 
-            @group(0) @binding(3)
-            var<storage, read_write> acuteCount : array<atomic<u32>>;
+@group(0) @binding(3)
+var<storage, read_write> acuteCountBuffer : array<atomic<u32>>;
 
-            @group(0) @binding(4)
-            var<uniform> uniforms : AnalysisUniforms;
+@group(0) @binding(4)
+var<uniform> uniforms                     : AnalysisUniforms;
 
-            // Get cell ID from texture coordinates
-            fn getCellID(coords: vec3<i32>) -> i32 {
-                // Bounds checking
-                if (coords.x < 0 || coords.x >= i32(uniforms.volumeSize) ||
-                    coords.y < 0 || coords.y >= i32(uniforms.volumeSize) ||
-                    coords.z < 0 || coords.z >= i32(uniforms.volumeSize)) {
-                    return -1;
-                }
-                
-                // Load the integer cell ID directly from the r32uint storage texture
-                let cellId = i32(textureLoad(jfaTexture, coords, 0).r);
-                
-                // Check if valid seed ID (4294967295u is the invalid marker)
-                if (cellId >= i32(uniforms.numSeeds) || cellId < 0) {
-                    return -1;
-                }
-                
-                return cellId;
-            }
+// Get cell ID from texture coordinates
+fn getCellID(coords: vec3<i32>) -> i32 {
+    // Bounds checking
+    if (coords.x < 0 || coords.x >= i32(uniforms.volumeSize) ||
+        coords.y < 0 || coords.y >= i32(uniforms.volumeSize) ||
+        coords.z < 0 || coords.z >= i32(uniforms.volumeSize)) {
+        return -1;
+    }
+    
+    // Load the integer cell ID directly from the r32uint storage texture
+    let cellId = i32(textureLoad(jfaTexture, coords, 0).r);
+    
+    // Check if valid seed ID (4294967295u is the invalid marker)
+    if (cellId >= i32(uniforms.numSeeds) || cellId < 0) {
+        return -1;
+    }
+    
+    return cellId;
+}
 
-            // Convert 3D coordinates to world space [-1, 1]
-            fn toWorldSpace(coords: vec3<i32>) -> vec3<f32> {
-                let fcoords = vec3<f32>(coords);
-                let size = f32(uniforms.volumeSize);
-                return (fcoords / size) * 2.0 - 1.0;
-            }
+// Convert 3D coordinates to world space [-1, 1]
+fn toWorldSpace(coords: vec3<i32>) -> vec3<f32> {
+    let fcoords = vec3<f32>(coords);
+    let size = f32(uniforms.volumeSize);
+    return (fcoords / size) * 2.0 - 1.0;
+}
 
-            // Main compute shader entry point
-            @compute @workgroup_size(8, 8, 8)
-            fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-                let coords = vec3<i32>(global_id);
-                let volumeSize = i32(uniforms.volumeSize);
-                
-                // Check bounds
-                if (coords.x >= volumeSize || coords.y >= volumeSize || coords.z >= volumeSize) {
-                    return;
-                }
-                
-                // Phase 1: Voxel summation for centroid calculation
-                let cellID = getCellID(coords);
-                if (cellID >= 0 && cellID < i32(uniforms.numSeeds)) {
-                    let worldPos = toWorldSpace(coords);
-                    
-                    // Atomic accumulation for centroid calculation
-                    // Convert float coordinates to fixed-point integers for atomic operations
-                    let fixedX = u32((worldPos.x + 1.0) * 1000000.0); // Scale and offset for precision
-                    let fixedY = u32((worldPos.y + 1.0) * 1000000.0);
-                    let fixedZ = u32((worldPos.z + 1.0) * 1000000.0);
-                    
-                    atomicAdd(&centroidData[cellID].positionSumX, fixedX);
-                    atomicAdd(&centroidData[cellID].positionSumY, fixedY);
-                    atomicAdd(&centroidData[cellID].positionSumZ, fixedZ);
-                    atomicAdd(&centroidData[cellID].voxelCount, 1u);
-                }
-                
-                // Phase 2: Junction detection for acute angles
-                // Only process if we're not at the edge (need 2x2x2 cube)
-                if (coords.x < volumeSize - 1 && coords.y < volumeSize - 1 && coords.z < volumeSize - 1) {
-                    // Get the 8 cell IDs in the 2x2x2 cube
-                    var cellIDs: array<i32, 8>;
-                    cellIDs[0] = getCellID(coords + vec3<i32>(0, 0, 0));
-                    cellIDs[1] = getCellID(coords + vec3<i32>(1, 0, 0));
-                    cellIDs[2] = getCellID(coords + vec3<i32>(0, 1, 0));
-                    cellIDs[3] = getCellID(coords + vec3<i32>(1, 1, 0));
-                    cellIDs[4] = getCellID(coords + vec3<i32>(0, 0, 1));
-                    cellIDs[5] = getCellID(coords + vec3<i32>(1, 0, 1));
-                    cellIDs[6] = getCellID(coords + vec3<i32>(0, 1, 1));
-                    cellIDs[7] = getCellID(coords + vec3<i32>(1, 1, 1));
-                    
-                    // Count unique cell IDs
-                    var uniqueIDs: array<i32, 8>;
-                    var uniqueCount = 0;
-                    
-                    for (var i = 0; i < 8; i++) {
-                        let id = cellIDs[i];
-                        if (id >= 0) {
-                            var isUnique = true;
-                            for (var j = 0; j < uniqueCount; j++) {
-                                if (uniqueIDs[j] == id) {
-                                    isUnique = false;
-                                    break;
-                                }
-                            }
-                            if (isUnique) {
-                                uniqueIDs[uniqueCount] = id;
-                                uniqueCount++;
-                            }
-                        }
+// Main compute shader entry point
+@compute @workgroup_size(8, 8, 8)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let coords = vec3<i32>(global_id);
+    let volumeSize = i32(uniforms.volumeSize);
+    
+    // Check bounds
+    if (coords.x >= volumeSize || coords.y >= volumeSize || coords.z >= volumeSize) {
+        return;
+    }
+    
+    // Phase 1: Voxel summation for centroid calculation
+    let cellID = getCellID(coords);
+    if (cellID >= 0 && cellID < i32(uniforms.numSeeds)) {
+        let worldPos = toWorldSpace(coords);
+        
+        // Atomic accumulation for centroid calculation
+        // Convert float coordinates to fixed-point integers for atomic operations
+        let fixedX = u32((worldPos.x + 1.0) * 1000000.0); // Scale and offset for precision
+        let fixedY = u32((worldPos.y + 1.0) * 1000000.0);
+        let fixedZ = u32((worldPos.z + 1.0) * 1000000.0);
+        
+        atomicAdd(&centroidData[cellID].positionSumX, fixedX);
+        atomicAdd(&centroidData[cellID].positionSumY, fixedY);
+        atomicAdd(&centroidData[cellID].positionSumZ, fixedZ);
+        atomicAdd(&centroidData[cellID].voxelCount, 1u);
+    }
+    
+    // Phase 2: Junction detection for acute angles
+    // Only process if we're not at the edge (need 2x2x2 cube)
+    if (coords.x < volumeSize - 1 && coords.y < volumeSize - 1 && coords.z < volumeSize - 1) {
+        // Get the 8 cell IDs in the 2x2x2 cube
+        var cellIDs: array<i32, 8>;
+        cellIDs[0] = getCellID(coords + vec3<i32>(0, 0, 0));
+        cellIDs[1] = getCellID(coords + vec3<i32>(1, 0, 0));
+        cellIDs[2] = getCellID(coords + vec3<i32>(0, 1, 0));
+        cellIDs[3] = getCellID(coords + vec3<i32>(1, 1, 0));
+        cellIDs[4] = getCellID(coords + vec3<i32>(0, 0, 1));
+        cellIDs[5] = getCellID(coords + vec3<i32>(1, 0, 1));
+        cellIDs[6] = getCellID(coords + vec3<i32>(0, 1, 1));
+        cellIDs[7] = getCellID(coords + vec3<i32>(1, 1, 1));
+        
+        // Count unique cell IDs
+        var uniqueIDs: array<i32, 8>;
+        var uniqueCount = 0;
+        
+        for (var i = 0; i < 8; i++) {
+            let id = cellIDs[i];
+            if (id >= 0) {
+                var isUnique = true;
+                for (var j = 0; j < uniqueCount; j++) {
+                    if (uniqueIDs[j] == id) {
+                        isUnique = false;
+                        break;
                     }
+                }
+                if (isUnique) {
+                    uniqueIDs[uniqueCount] = id;
+                    uniqueCount++;
+                }
+            }
+        }
+        
+        // If we have 3+ unique cells, it's a junction
+        if (uniqueCount >= 3) {
+            let junctionPos = toWorldSpace(coords) + vec3<f32>(0.5) / f32(uniforms.volumeSize) * 2.0;
+            
+            // Calculate angles between all pairs of seeds meeting at this junction
+            for (var i = 0; i < uniqueCount; i++) {
+                for (var j = i + 1; j < uniqueCount; j++) {
+                    let idA = uniqueIDs[i];
+                    let idB = uniqueIDs[j];
                     
-                    // If we have 3+ unique cells, it's a junction
-                    if (uniqueCount >= 3) {
-                        let junctionPos = toWorldSpace(coords) + vec3<f32>(0.5) / f32(uniforms.volumeSize) * 2.0;
+                    if (idA < i32(uniforms.numSeeds) && idB < i32(uniforms.numSeeds)) {
+                        let seedA = seedBuffer[idA];
+                        let seedB = seedBuffer[idB];
                         
-                        // Calculate angles between all pairs of seeds meeting at this junction
-                        for (var i = 0; i < uniqueCount; i++) {
-                            for (var j = i + 1; j < uniqueCount; j++) {
-                                let idA = uniqueIDs[i];
-                                let idB = uniqueIDs[j];
-                                
-                                if (idA < i32(uniforms.numSeeds) && idB < i32(uniforms.numSeeds)) {
-                                    let seedA = seedBuffer[idA];
-                                    let seedB = seedBuffer[idB];
-                                    
-                                    // Calculate vectors from junction to each seed
-                                    let vA = normalize(seedA.position - junctionPos);
-                                    let vB = normalize(seedB.position - junctionPos);
-                                    
-                                    // Calculate angle between vectors
-                                    let dotProduct = dot(vA, vB);
-                                    let angle = acos(clamp(dotProduct, -1.0, 1.0));
-                                    
-                                    // Count acute angles (< 90 degrees)
-                                    if (angle < 1.5707963) { // PI/2
-                                        atomicAdd(&acuteCount[idA], 1u);
-                                        atomicAdd(&acuteCount[idB], 1u);
-                                    }
-                                }
-                            }
+                        // Calculate vectors from junction to each seed
+                        let vA = normalize(seedA.position - junctionPos);
+                        let vB = normalize(seedB.position - junctionPos);
+                        
+                        // Calculate angle between vectors
+                        let dotProduct = dot(vA, vB);
+                        let angle = acos(clamp(dotProduct, -1.0, 1.0));
+                        
+                        // Count acute angles (< 90 degrees)
+                        if (angle < 1.5707963) { // PI/2
+                            atomicAdd(&acuteCountBuffer[idA], 1u);
+                            atomicAdd(&acuteCountBuffer[idB], 1u);
                         }
                     }
                 }
             }
+        }
+    }
+}
         `;
     }
     
