@@ -247,69 +247,94 @@ export class JFACompute {
      * Create the compute pipeline
      */
     createComputePipeline() {
-        // Create shader module
-        const shaderModule = this.device.createShaderModule({
-            code: this.computeShaderCode,
-        });
-        
-        // Create bind group layout
-        const bindGroupLayout = this.device.createBindGroupLayout({
-            entries: [
-                {
-                    binding: 0,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer: { type: 'uniform' },
-                },
-                {
-                    binding: 1,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer: { type: 'read-only-storage' },
-                },
-                {
-                    binding: 2,
-                    visibility: GPUShaderStage.COMPUTE,
-                    storageTexture: {
-                        access: 'write-only',
-                        format: 'r32uint',
-                        viewDimension: '3d',
+        try {
+            console.log('🖥️ Compiling JFA compute shader...');
+            
+            // Create shader module
+            const shaderModule = this.device.createShaderModule({
+                label: 'JFA Compute Shader',
+                code: this.computeShaderCode,
+            });
+            
+            // Check for compilation errors
+            shaderModule.getCompilationInfo().then(compilationInfo => {
+                if (compilationInfo.messages.length > 0) {
+                    console.group('🖥️ JFA WGSL Compilation Messages:');
+                    for (const message of compilationInfo.messages) {
+                        const level = message.type === 'error' ? 'error' : 'warn';
+                        console[level](`${message.type}: ${message.message}`);
+                        if (message.lineNum) {
+                            console[level](`  Line ${message.lineNum}: ${message.linePos}`);
+                        }
+                    }
+                    console.groupEnd();
+                }
+            });
+            
+            // Create bind group layout
+            const bindGroupLayout = this.device.createBindGroupLayout({
+                entries: [
+                    {
+                        binding: 0,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: { type: 'uniform' },
                     },
-                },
-                {
-                    binding: 3,
-                    visibility: GPUShaderStage.COMPUTE,
-                    texture: { 
-                        sampleType: 'uint',
-                        viewDimension: '3d'
+                    {
+                        binding: 1,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: { type: 'read-only-storage' },
                     },
+                    {
+                        binding: 2,
+                        visibility: GPUShaderStage.COMPUTE,
+                        storageTexture: {
+                            access: 'write-only',
+                            format: 'r32uint',
+                            viewDimension: '3d',
+                        },
+                    },
+                    {
+                        binding: 3,
+                        visibility: GPUShaderStage.COMPUTE,
+                        texture: { 
+                            sampleType: 'uint',
+                            viewDimension: '3d'
+                        },
+                    },
+                ],
+            });
+            
+            // Create pipeline layout
+            const pipelineLayout = this.device.createPipelineLayout({
+                bindGroupLayouts: [bindGroupLayout],
+            });
+            
+            // Create compute pipelines
+            this.initPipeline = this.device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: 'initSeeds',
                 },
-            ],
-        });
-        
-        // Create pipeline layout
-        const pipelineLayout = this.device.createPipelineLayout({
-            bindGroupLayouts: [bindGroupLayout],
-        });
-        
-        // Create compute pipelines
-        this.initPipeline = this.device.createComputePipeline({
-            layout: pipelineLayout,
-            compute: {
-                module: shaderModule,
-                entryPoint: 'initSeeds',
-            },
-        });
-        
-        this.jfaPipeline = this.device.createComputePipeline({
-            layout: pipelineLayout,
-            compute: {
-                module: shaderModule,
-                entryPoint: 'jfaStep',
-            },
-        });
-        
-        this.bindGroupLayout = bindGroupLayout;
-        
-        console.log('🔧 JFA compute pipeline created');
+            });
+            
+            this.jfaPipeline = this.device.createComputePipeline({
+                layout: pipelineLayout,
+                compute: {
+                    module: shaderModule,
+                    entryPoint: 'jfaStep',
+                },
+            });
+            
+            // Store the bind group layout for later use
+            this.bindGroupLayout = bindGroupLayout;
+            
+            console.log('✅ JFA compute pipelines created successfully');
+            
+        } catch (error) {
+            console.error('❌ JFA compute pipeline creation failed:', error);
+            throw error;
+        }
     }
     
     /**

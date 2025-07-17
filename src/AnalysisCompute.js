@@ -47,69 +47,100 @@ export class AnalysisCompute {
             throw new Error('WebGPU device not available');
         }
         
-        // Create compute shader module
-        const computeShaderModule = this.device.createShaderModule({
-            label: 'Voronoi Analysis Compute Shader',
-            code: this.getAnalysisComputeShader()
-        });
-        
-        // Create bind group layout
-        this.bindGroupLayout = this.device.createBindGroupLayout({
-            label: 'Analysis Compute Bind Group Layout',
-            entries: [
-                {
-                    binding: 0,
-                    visibility: GPUShaderStage.COMPUTE,
-                    storageTexture: {
-                        access: 'read-only',
-                        format: 'r32uint',
-                        viewDimension: '3d'
-                    }
-                },
-                {
-                    binding: 1,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer: {
-                        type: 'storage'
-                    }
-                },
-                {
-                    binding: 2,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer: {
-                        type: 'storage'
-                    }
-                },
-                {
-                    binding: 3,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer: {
-                        type: 'storage'
-                    }
-                },
-                {
-                    binding: 4,
-                    visibility: GPUShaderStage.COMPUTE,
-                    buffer: {
-                        type: 'uniform'
+        // Create compute shader module with error handling
+        try {
+            const shaderCode = this.getAnalysisComputeShader();
+            console.log('🔍 Compiling analysis compute shader...');
+            
+            const computeShaderModule = this.device.createShaderModule({
+                label: 'Voronoi Analysis Compute Shader',
+                code: shaderCode
+            });
+            
+            // Wait for compilation to complete and check for errors
+            const compilationInfo = await computeShaderModule.getCompilationInfo();
+            if (compilationInfo.messages.length > 0) {
+                console.group('🔍 WGSL Compilation Messages:');
+                for (const message of compilationInfo.messages) {
+                    const level = message.type === 'error' ? 'error' : 'warn';
+                    console[level](`${message.type}: ${message.message}`);
+                    if (message.lineNum) {
+                        console[level](`  Line ${message.lineNum}: ${message.linePos}`);
                     }
                 }
-            ]
-        });
-       
-        // Create compute pipeline
-        this.computePipeline = this.device.createComputePipeline({
-            label: 'Analysis Compute Pipeline',
-            layout: this.device.createPipelineLayout({
-                bindGroupLayouts: [this.bindGroupLayout]
-            }),
-            compute: {
-                module: computeShaderModule,
-                entryPoint: 'main'
+                console.groupEnd();
+                
+                // Fail if there are compilation errors
+                const hasErrors = compilationInfo.messages.some(msg => msg.type === 'error');
+                if (hasErrors) {
+                    throw new Error('WGSL shader compilation failed with errors');
+                }
             }
-        });
-       
-        console.log('✅ AnalysisCompute initialized successfully');
+            
+            console.log('✅ Analysis compute shader compiled successfully');
+            
+            // Create bind group layout
+            this.bindGroupLayout = this.device.createBindGroupLayout({
+                label: 'Analysis Compute Bind Group Layout',
+                entries: [
+                    {
+                        binding: 0,
+                        visibility: GPUShaderStage.COMPUTE,
+                        storageTexture: {
+                            access: 'read-only',
+                            format: 'r32uint',
+                            viewDimension: '3d'
+                        }
+                    },
+                    {
+                        binding: 1,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: {
+                            type: 'storage'
+                        }
+                    },
+                    {
+                        binding: 2,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: {
+                            type: 'storage'
+                        }
+                    },
+                    {
+                        binding: 3,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: {
+                            type: 'storage'
+                        }
+                    },
+                    {
+                        binding: 4,
+                        visibility: GPUShaderStage.COMPUTE,
+                        buffer: {
+                            type: 'uniform'
+                        }
+                    }
+                ]
+            });
+           
+            // Create compute pipeline
+            this.computePipeline = this.device.createComputePipeline({
+                label: 'Analysis Compute Pipeline',
+                layout: this.device.createPipelineLayout({
+                    bindGroupLayouts: [this.bindGroupLayout]
+                }),
+                compute: {
+                    module: computeShaderModule,
+                    entryPoint: 'main'
+                }
+            });
+            
+            console.log('✅ AnalysisCompute initialized successfully');
+            
+        } catch (error) {
+            console.error('❌ AnalysisCompute initialization failed:', error);
+            throw error;
+        }
     }
     
     /**
@@ -358,13 +389,128 @@ export class AnalysisCompute {
     }
     
     /**
-     * DEPRECATED: We no longer read results back to CPU
-     * The analysis results stay on GPU and are consumed directly by PhysicsCompute
-     * This eliminates the GPU->CPU bottleneck that was killing performance
+     * Get analysis results from GPU buffers
      */
-    // async getResults(seedData) {
-    //     // NO LONGER NEEDED - Data stays on GPU!
-    // }
+    async getResults() {
+        console.log('🔍 Reading analysis results from GPU...');
+        
+        try {
+            // Create staging buffers for readback
+            const seedStagingBuffer = this.device.createBuffer({
+                label: 'Seed Staging Buffer',
+                size: this.seedBuffer.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+            
+            const acuteStagingBuffer = this.device.createBuffer({
+                label: 'Acute Count Staging Buffer',
+                size: this.acuteCountBuffer.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+            
+            const centroidStagingBuffer = this.device.createBuffer({
+                label: 'Centroid Staging Buffer',
+                size: this.centroidDataBuffer.size,
+                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+            });
+            
+            // Copy data from GPU buffers to staging buffers
+            const commandEncoder = this.device.createCommandEncoder({
+                label: 'Analysis Results Copy Command Encoder'
+            });
+            
+            commandEncoder.copyBufferToBuffer(
+                this.seedBuffer, 0,
+                seedStagingBuffer, 0,
+                this.seedBuffer.size
+            );
+            
+            commandEncoder.copyBufferToBuffer(
+                this.acuteCountBuffer, 0,
+                acuteStagingBuffer, 0,
+                this.acuteCountBuffer.size
+            );
+            
+            commandEncoder.copyBufferToBuffer(
+                this.centroidDataBuffer, 0,
+                centroidStagingBuffer, 0,
+                this.centroidDataBuffer.size
+            );
+            
+            this.device.queue.submit([commandEncoder.finish()]);
+            
+            // Wait for completion
+            await this.device.queue.onSubmittedWorkDone();
+            
+            // Map and read the data
+            await seedStagingBuffer.mapAsync(GPUMapMode.READ);
+            await acuteStagingBuffer.mapAsync(GPUMapMode.READ);
+            await centroidStagingBuffer.mapAsync(GPUMapMode.READ);
+            
+            const seedData = new Float32Array(seedStagingBuffer.getMappedRange());
+            const acuteData = new Uint32Array(acuteStagingBuffer.getMappedRange());
+            const centroidData = new Uint32Array(centroidStagingBuffer.getMappedRange());
+            
+            // Analyze results for debugging
+            let totalAcuteCount = 0;
+            let nonZeroSeeds = 0;
+            let maxAcuteCount = 0;
+            
+            for (let i = 0; i < acuteData.length; i++) {
+                const count = acuteData[i];
+                totalAcuteCount += count;
+                if (count > 0) {
+                    nonZeroSeeds++;
+                    maxAcuteCount = Math.max(maxAcuteCount, count);
+                }
+            }
+            
+            console.log('🔍 Analysis Results Summary:');
+            console.log(`  Total acute count: ${totalAcuteCount}`);
+            console.log(`  Seeds with non-zero acute count: ${nonZeroSeeds}/${acuteData.length}`);
+            console.log(`  Max acute count: ${maxAcuteCount}`);
+            
+            // Check centroid data
+            let nonZeroCentroids = 0;
+            for (let i = 0; i < centroidData.length; i += 4) {
+                const voxelCount = centroidData[i + 3];
+                if (voxelCount > 0) {
+                    nonZeroCentroids++;
+                }
+            }
+            console.log(`  Seeds with valid centroids: ${nonZeroCentroids}/${centroidData.length / 4}`);
+            
+            // If we have zero results, warn about potential shader issues
+            if (totalAcuteCount === 0) {
+                console.warn('⚠️  Analysis produced zero acute counts - shader may not be executing properly!');
+            } else {
+                console.log('✅ Analysis shader is producing non-zero results');
+            }
+            
+            // Unmap buffers
+            seedStagingBuffer.unmap();
+            acuteStagingBuffer.unmap();
+            centroidStagingBuffer.unmap();
+            
+            // Clean up staging buffers
+            seedStagingBuffer.destroy();
+            acuteStagingBuffer.destroy();
+            centroidStagingBuffer.destroy();
+            
+            return {
+                seedData,
+                acuteData,
+                centroidData,
+                totalAcuteCount,
+                nonZeroSeeds,
+                maxAcuteCount
+            };
+            
+        } catch (error) {
+            console.error('❌ Failed to read analysis results:', error);
+            throw error;
+        }
+    }
 
     /**
      * Get the analysis buffers for use by other compute passes
@@ -383,45 +529,56 @@ export class AnalysisCompute {
      */
     getAnalysisComputeShader() {
         return `
-            // Uniform buffer for parameters
+            // Analysis uniform buffer with proper typing
             struct AnalysisUniforms {
-                volumeSize: u32,
-                numSeeds: u32,
-                padding1: u32,
-                padding2: u32
-            }
-            
-            // Seed data structure
+                volumeSize : u32,
+                numSeeds   : u32,
+                padding1   : u32,
+                padding2   : u32
+            };
+
+            // Seed data structure with proper typing
             struct SeedData {
-                position: vec3<f32>,
-                centroid: vec3<f32>,
-                acuteCount: f32,
-                voxelCount: f32
-            }
-            
-                         // Centroid calculation data with atomic counters
-             struct CentroidData {
-                 positionSumX: atomic<u32>,
-                 positionSumY: atomic<u32>,
-                 positionSumZ: atomic<u32>,
-                 voxelCount: atomic<u32>
-             }
-            
-            @group(0) @binding(0) var jfaTexture: texture_storage_3d<r32uint, read>;
-            @group(0) @binding(1) var<storage, read_write> seedBuffer: array<SeedData>;
-            @group(0) @binding(2) var<storage, read_write> centroidData: array<CentroidData>;
-            @group(0) @binding(3) var<storage, read_write> acuteCountBuffer: array<atomic<u32>>;
-            @group(0) @binding(4) var<uniform> uniforms: AnalysisUniforms;
-            
+                position   : vec3<f32>,
+                centroid   : vec3<f32>,
+                acuteCount : f32,
+                voxelCount : f32
+            };
+
+            // Centroid calculation data with atomic counters
+            struct CentroidData {
+                positionSumX : atomic<u32>,
+                positionSumY : atomic<u32>,
+                positionSumZ : atomic<u32>,
+                voxelCount   : atomic<u32>
+            };
+
+            // Properly typed binding declarations
+            @group(0) @binding(0)
+            var jfaTexture : texture_storage_3d<r32uint, read>;
+
+            @group(0) @binding(1)
+            var<storage, read_write> seedBuffer : array<SeedData>;
+
+            @group(0) @binding(2)
+            var<storage, read_write> centroidData : array<CentroidData>;
+
+            @group(0) @binding(3)
+            var<storage, read_write> acuteCount : array<atomic<u32>>;
+
+            @group(0) @binding(4)
+            var<uniform> uniforms : AnalysisUniforms;
+
             // Get cell ID from texture coordinates
             fn getCellID(coords: vec3<i32>) -> i32 {
+                // Bounds checking
                 if (coords.x < 0 || coords.x >= i32(uniforms.volumeSize) ||
                     coords.y < 0 || coords.y >= i32(uniforms.volumeSize) ||
                     coords.z < 0 || coords.z >= i32(uniforms.volumeSize)) {
                     return -1;
                 }
                 
-                // Load the integer cell ID directly from the r32uint storage texture (base mip level 0)
+                // Load the integer cell ID directly from the r32uint storage texture
                 let cellId = i32(textureLoad(jfaTexture, coords, 0).r);
                 
                 // Check if valid seed ID (4294967295u is the invalid marker)
@@ -431,14 +588,15 @@ export class AnalysisCompute {
                 
                 return cellId;
             }
-            
+
             // Convert 3D coordinates to world space [-1, 1]
             fn toWorldSpace(coords: vec3<i32>) -> vec3<f32> {
                 let fcoords = vec3<f32>(coords);
                 let size = f32(uniforms.volumeSize);
                 return (fcoords / size) * 2.0 - 1.0;
             }
-            
+
+            // Main compute shader entry point
             @compute @workgroup_size(8, 8, 8)
             fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let coords = vec3<i32>(global_id);
@@ -454,16 +612,16 @@ export class AnalysisCompute {
                 if (cellID >= 0 && cellID < i32(uniforms.numSeeds)) {
                     let worldPos = toWorldSpace(coords);
                     
-                                         // Atomic accumulation for centroid calculation
-                     // Convert float coordinates to fixed-point integers for atomic operations
-                     let fixedX = u32((worldPos.x + 1.0) * 1000000.0); // Scale and offset for precision
-                     let fixedY = u32((worldPos.y + 1.0) * 1000000.0);
-                     let fixedZ = u32((worldPos.z + 1.0) * 1000000.0);
-                     
-                     atomicAdd(&centroidData[cellID].positionSumX, fixedX);
-                     atomicAdd(&centroidData[cellID].positionSumY, fixedY);
-                     atomicAdd(&centroidData[cellID].positionSumZ, fixedZ);
-                     atomicAdd(&centroidData[cellID].voxelCount, 1u);
+                    // Atomic accumulation for centroid calculation
+                    // Convert float coordinates to fixed-point integers for atomic operations
+                    let fixedX = u32((worldPos.x + 1.0) * 1000000.0); // Scale and offset for precision
+                    let fixedY = u32((worldPos.y + 1.0) * 1000000.0);
+                    let fixedZ = u32((worldPos.z + 1.0) * 1000000.0);
+                    
+                    atomicAdd(&centroidData[cellID].positionSumX, fixedX);
+                    atomicAdd(&centroidData[cellID].positionSumY, fixedY);
+                    atomicAdd(&centroidData[cellID].positionSumZ, fixedZ);
+                    atomicAdd(&centroidData[cellID].voxelCount, 1u);
                 }
                 
                 // Phase 2: Junction detection for acute angles
@@ -501,7 +659,7 @@ export class AnalysisCompute {
                         }
                     }
                     
-                    // If we have 3+ unique cells, it's a junction (more lenient)
+                    // If we have 3+ unique cells, it's a junction
                     if (uniqueCount >= 3) {
                         let junctionPos = toWorldSpace(coords) + vec3<f32>(0.5) / f32(uniforms.volumeSize) * 2.0;
                         
@@ -525,8 +683,8 @@ export class AnalysisCompute {
                                     
                                     // Count acute angles (< 90 degrees)
                                     if (angle < 1.5707963) { // PI/2
-                                        atomicAdd(&acuteCountBuffer[idA], 1u);
-                                        atomicAdd(&acuteCountBuffer[idB], 1u);
+                                        atomicAdd(&acuteCount[idA], 1u);
+                                        atomicAdd(&acuteCount[idB], 1u);
                                     }
                                 }
                             }

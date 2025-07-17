@@ -200,13 +200,15 @@ export class PureGPUSystem {
         
         // Create analysis compute shader
         const analysisShaderCode = `
+            // Seed data structure with proper typing
             struct Seed {
-                position: vec4f,  // FIXED: Changed from vec3f to match actual data layout
-                velocity: vec3f,
+                position: vec4<f32>,  // Changed from vec3f to match actual data layout
+                velocity: vec3<f32>,
                 radius: f32,
                 padding: f32
-            }
-            
+            };
+
+            // Properly typed binding declarations
             @group(0) @binding(0) var jfaTexture: texture_storage_3d<r32uint, read>;
             @group(0) @binding(1) var<storage, read> seeds: array<Seed>;
             @group(0) @binding(2) var<storage, read_write> centroids: array<atomic<u32>>; // Flat array of atomics
@@ -222,7 +224,7 @@ export class PureGPUSystem {
                 }
                 
                 // Load the cell ID directly from 3D texture
-                let cellId = textureLoad(jfaTexture, id).r;
+                let cellId = textureLoad(jfaTexture, id, 0).r;
                 
                 if (cellId >= arrayLength(&seeds)) {
                     return;
@@ -244,9 +246,9 @@ export class PureGPUSystem {
                 for (var dz = 0u; dz <= 1u; dz++) {
                     for (var dy = 0u; dy <= 1u; dy++) {
                         for (var dx = 0u; dx <= 1u; dx++) {
-                            let samplePos = id + vec3u(dx, dy, dz);
+                            let samplePos = id + vec3<u32>(dx, dy, dz);
                             if (samplePos.x < dims.x && samplePos.y < dims.y && samplePos.z < dims.z) {
-                                let sampleCell = textureLoad(jfaTexture, samplePos).r;
+                                let sampleCell = textureLoad(jfaTexture, samplePos, 0).r;
                                 
                                 if (sampleCell < arrayLength(&seeds)) {
                                     // Check if this cell is unique
@@ -270,7 +272,7 @@ export class PureGPUSystem {
                 // If we have 3 or more unique cells, this is a junction
                 if (numUnique >= 3u) {
                     // Calculate angles and update acute counts
-                    let junctionPos = (vec3f(id) + vec3f(0.5)) / vec3f(dims) * 2.0 - 1.0;
+                    let junctionPos = (vec3<f32>(id) + vec3<f32>(0.5)) / vec3<f32>(dims) * 2.0 - 1.0;
                     
                     for (var i = 0u; i < numUnique; i++) {
                         for (var j = i + 1u; j < numUnique; j++) {
@@ -314,11 +316,13 @@ export class PureGPUSystem {
         
         // Create centroid finalization compute shader
         const finalizationShaderCode = `
+            // Centroid data structure with proper typing
             struct CentroidDataFloat {
-                positionSum: vec3f,
+                positionSum: vec3<f32>,
                 voxelCount: f32
-            }
+            };
             
+            // Properly typed binding declarations
             @group(0) @binding(0) var<storage, read> atomicCentroids: array<u32>; // Flat array (non-atomic for reading)
             @group(0) @binding(1) var<storage, read_write> floatCentroids: array<CentroidDataFloat>;
             @group(0) @binding(2) var<uniform> volumeSize: u32;
@@ -339,12 +343,12 @@ export class PureGPUSystem {
                 
                 // Convert to world space centroid
                 if (voxelCount > 0.0) {
-                    let centroid = vec3f(sumX, sumY, sumZ) / voxelCount;
+                    let centroid = vec3<f32>(sumX, sumY, sumZ) / voxelCount;
                     // Convert from voxel coordinates to world coordinates [-1, 1]
                     floatCentroids[cellId].positionSum = (centroid / f32(volumeSize)) * 2.0 - 1.0;
                     floatCentroids[cellId].voxelCount = voxelCount;
                 } else {
-                    floatCentroids[cellId].positionSum = vec3f(0.0);
+                    floatCentroids[cellId].positionSum = vec3<f32>(0.0);
                     floatCentroids[cellId].voxelCount = 0.0;
                 }
             }
@@ -391,18 +395,21 @@ export class PureGPUSystem {
         
         // Create physics compute shader
         const physicsShaderCode = `
+            // Seed data structure with proper typing
             struct Seed {
-                position: vec4f,  // FIXED: Changed from vec3f to match actual data layout
-                velocity: vec3f,
+                position: vec4<f32>,  // Changed from vec3f to match actual data layout
+                velocity: vec3<f32>,
                 radius: f32,
                 padding: f32
-            }
+            };
             
+            // Centroid data structure with proper typing
             struct CentroidData {
-                positionSum: vec3f,
+                positionSum: vec3<f32>,
                 voxelCount: f32
-            }
+            };
             
+            // Physics settings structure with proper typing
             struct PhysicsSettings {
                 threshold: f32,
                 growthRate: f32,
@@ -412,15 +419,17 @@ export class PureGPUSystem {
                 maxSpeed: f32,
                 mode: u32,  // 0=balanced, 1=growthOnly, 2=shrinkOnly, 3=inverse
                 deltaTime: f32
-            }
+            };
             
+            // Statistics structure with proper typing
             struct Stats {
                 growing: atomic<u32>,
                 shrinking: atomic<u32>,
                 total: atomic<u32>,
                 padding: u32
-            }
+            };
             
+            // Properly typed binding declarations
             @group(0) @binding(0) var<storage, read_write> seeds: array<Seed>;
             @group(0) @binding(1) var<storage, read> centroids: array<CentroidData>;
             @group(0) @binding(2) var<storage, read> acuteCounts: array<u32>;
@@ -482,7 +491,7 @@ export class PureGPUSystem {
                         }
                         
                         // Apply forces
-                        var force = vec3f(0.0);
+                        var force = vec3<f32>(0.0);
                         if (shouldGrow) {
                             // GROW: Move seed AWAY from centroid to expand the cell
                             force = -direction * settings.growthRate;
@@ -507,7 +516,7 @@ export class PureGPUSystem {
                         seed.position.xyz = seed.position.xyz + seed.velocity * settings.deltaTime;
                         
                         // Keep seeds in bounds [-1, 1]
-                        seed.position.xyz = clamp(seed.position.xyz, vec3f(-1.0), vec3f(1.0));
+                        seed.position.xyz = clamp(seed.position.xyz, vec3<f32>(-1.0), vec3<f32>(1.0));
                     }
                 }
                 
