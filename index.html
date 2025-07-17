@@ -9,8 +9,10 @@
     <script type="importmap">
         {
             "imports": {
-                "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+                "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
+                "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.tsl.js",
+                "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.webgpu.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/"
             }
         }
     </script>
@@ -406,6 +408,7 @@
         let hybridSystem;
         let animationId;
         let clock = new THREE.Clock();
+        let isWebGPUReady = false;
         let stats = {
             fps: 0,
             frameTime: 0,
@@ -424,23 +427,35 @@
         async function init() {
             console.log('🌌 Initializing Fabric of Space Z...');
             
-            // Set up Three.js scene
-            setupScene();
-            
-            // Initialize the hybrid Voronoi system
-            hybridSystem = new HybridVoronoiSystem();
-            await hybridSystem.init();
-            
-            // Set up UI event listeners
-            setupUI();
-            
-            // Start the render loop
-            animate();
-            
-            console.log('✅ Fabric of Space Z initialized successfully!');
+            try {
+                // Set up Three.js scene
+                await setupScene();
+                
+                // Initialize the hybrid Voronoi system
+                hybridSystem = new HybridVoronoiSystem();
+                await hybridSystem.init();
+                
+                // Set up UI event listeners
+                setupUI();
+                
+                // Start the render loop
+                animate();
+                
+                console.log('✅ Fabric of Space Z initialized successfully!');
+            } catch (error) {
+                console.error('❌ Failed to initialize application:', error);
+                // Show error message to user
+                document.getElementById('sceneContainer').innerHTML = `
+                    <div style="color: white; padding: 20px; text-align: center;">
+                        <h2>Initialization Error</h2>
+                        <p>Failed to initialize the application.</p>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
         }
         
-        function setupScene() {
+        async function setupScene() {
             // Create scene
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x111111);
@@ -449,11 +464,20 @@
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.set(2, 2, 2);
             
-            // Create renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true });
+            // For now, fall back to WebGL renderer until WebGPU CDN is available
+            console.log('🔧 Creating WebGL renderer (WebGPU CDN not available)...');
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                powerPreference: 'high-performance'
+            });
+            
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.setPixelRatio(window.devicePixelRatio);
             document.getElementById('sceneContainer').appendChild(renderer.domElement);
+            
+            // Mark as ready immediately for WebGL
+            isWebGPUReady = true;
+            console.log('✅ WebGL renderer initialized successfully!');
             
             // Make scene and renderer globally accessible
             window.scene = scene;
@@ -610,8 +634,11 @@
             document.getElementById('stopPhysicsBtn').disabled = true;
         }
         
-        function animate() {
+        async function animate() {
             animationId = requestAnimationFrame(animate);
+            
+            // Only render if WebGPU is ready
+            if (!isWebGPUReady) return;
             
             const deltaTime = clock.getDelta();
             const currentTime = performance.now();
@@ -621,7 +648,7 @@
             
             // Update hybrid system
             if (hybridSystem) {
-                const systemStats = hybridSystem.update(deltaTime);
+                const systemStats = await hybridSystem.update(deltaTime);
                 Object.assign(stats, systemStats);
             }
             

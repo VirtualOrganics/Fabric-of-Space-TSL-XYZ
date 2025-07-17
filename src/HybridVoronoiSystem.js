@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { GPUVoronoiCompute } from './GPUVoronoiCompute.js';
+import { JFACompute } from './JFACompute.js';
 import { VoronoiAnalyzer } from './VoronoiAnalyzer.js';
+import { AnalysisCompute } from './AnalysisCompute.js';
 import { PhysicsEngine } from './PhysicsEngine.js';
+import { PhysicsCompute } from './PhysicsCompute.js';
 import { VolumeRenderer } from './VolumeRenderer.js';
+import { TSLVolumeRenderer } from './TSLVolumeRenderer.js';
 import { ColorLegend } from './ColorLegend.js';
 
 /**
@@ -29,13 +33,16 @@ export class HybridVoronoiSystem {
         
         // CPU analysis components
         this.analyzer = null;
+        this.analysisCompute = null;
         this.physicsEngine = null;
+        this.physicsCompute = null;
         
         // Visualization components
         this.scene = null;
         this.meshGroup = null;
         this.pointsGroup = null;
         this.volumeRenderer = null;
+        this.tslVolumeRenderer = null;
         this.colorLegend = null;
         
         // Debug visualization components
@@ -72,21 +79,55 @@ export class HybridVoronoiSystem {
     }
     
     /**
+     * Detect if the current renderer is WebGPU
+     */
+    isWebGPURenderer() {
+        const renderer = window.renderer;
+        if (!renderer) return false;
+        
+        // Check if renderer has WebGPU-specific methods
+        return typeof renderer.getDevice === 'function' || 
+               renderer.constructor.name === 'WebGPURenderer' ||
+               renderer.isWebGPURenderer === true;
+    }
+    
+    /**
      * Initialize the hybrid system
      */
     async init() {
         console.log('🚀 Initializing HybridVoronoiSystem...');
         
         try {
-            // Initialize GPU compute system
-            this.gpuCompute = new GPUVoronoiCompute();
-            await this.gpuCompute.init();
+            // Detect renderer type and initialize appropriate compute system
+            const isWebGPU = this.isWebGPURenderer();
             
-            // Initialize CPU analyzer
+            if (isWebGPU) {
+                console.log('🔧 Using WebGPU compute pipeline (JFACompute)');
+                this.gpuCompute = new JFACompute(window.renderer);
+                await this.gpuCompute.init();
+            } else {
+                console.log('🔧 Using WebGL compute pipeline (GPUVoronoiCompute)');
+                this.gpuCompute = new GPUVoronoiCompute();
+                await this.gpuCompute.init();
+            }
+            
+            // Initialize CPU analyzer (fallback for WebGL)
             this.analyzer = new VoronoiAnalyzer();
             
-            // Initialize physics engine
+            // Initialize WebGPU analysis compute if available
+            if (this.isWebGPURenderer()) {
+                this.analysisCompute = new AnalysisCompute(window.renderer);
+                await this.analysisCompute.init();
+            }
+            
+            // Initialize physics engine (fallback for WebGL)
             this.physicsEngine = new PhysicsEngine();
+            
+            // Initialize WebGPU physics compute if available
+            if (this.isWebGPURenderer()) {
+                this.physicsCompute = new PhysicsCompute(window.renderer);
+                await this.physicsCompute.init();
+            }
             
             // Initialize volume renderer
             this.volumeRenderer = new VolumeRenderer();
@@ -224,8 +265,14 @@ export class HybridVoronoiSystem {
         this.debugGroup.name = 'DebugVisuals';
         this.scene.add(this.debugGroup);
         
-        // Initialize volume renderer
+        // Initialize volume renderer (fallback for WebGL)
         this.volumeRenderer.init(this.scene);
+        
+        // Initialize TSL volume renderer for WebGPU
+        if (this.isWebGPURenderer()) {
+            this.tslVolumeRenderer = new TSLVolumeRenderer();
+            this.tslVolumeRenderer.init(this.scene);
+        }
         
         // Create initial point visualization
         this.updatePointsVisualization();
@@ -266,7 +313,7 @@ export class HybridVoronoiSystem {
     /**
      * Main update loop - the heart of the hybrid system
      */
-    update(deltaTime) {
+    async update(deltaTime) {
         if (!this.simulationRunning) {
             return this.performanceStats;
         }
@@ -274,38 +321,77 @@ export class HybridVoronoiSystem {
         const startTime = performance.now();
         
         try {
-            // Step 1: Apply physics based on last frame's analysis
+            // Only run the full pipeline if physics is enabled
             if (this.physicsEnabled) {
+                // Step 1: Apply physics based on last frame's analysis
                 const physicsStart = performance.now();
-                this.physicsEngine.update(this.seedData, this.settings.physicsSettings, deltaTime);
+                if (this.isWebGPURenderer() && this.physicsCompute) {
+                    // WebGPU implementation - run physics compute pass
+                    await this.physicsCompute.compute(this.seedData, this.settings.physicsSettings, deltaTime);
+                    await this.physicsCompute.getResults(this.seedData);
+                    
+                    // Get physics statistics from GPU
+                    const physicsStats = await this.physicsCompute.getStatistics();
+                    this.performanceStats.growingCells = physicsStats.growingCells;
+                    this.performanceStats.shrinkingCells = physicsStats.shrinkingCells;
+                } else {
+                    // WebGL implementation - fallback to CPU physics
+                    this.physicsEngine.update(this.seedData, this.settings.physicsSettings, deltaTime);
+                }
                 this.performanceStats.physicsTime = Math.round(performance.now() - physicsStart);
-            }
-            
-            // Step 2: Push updated seed data to GPU
-            this.updateSeedTexture();
-            
-            // Step 3: Run JFA compute pass on GPU
-            const jfaStart = performance.now();
-            this.gpuCompute.compute(this.seedTexture, this.seedTextureSize, this.numPoints);
-            this.performanceStats.jfaTime = Math.round(performance.now() - jfaStart);
-            
-            // Step 4: Read results back to CPU and analyze
-            const analysisStart = performance.now();
-            const jfaOutput = this.gpuCompute.getOutputData();
-            this.analyzer.analyze(jfaOutput, this.seedData, this.settings.volumeResolution);
-            this.performanceStats.analysisTime = Math.round(performance.now() - analysisStart);
-            
-            // Step 5: Update visualization
-            this.updateVisualization();
-            
-            // Step 6: Update debug visuals
-            if (this.settings.showDebugVisuals) {
-                this.updateDebugVisuals();
-            }
-            
-            // Step 7: Update color legend
-            if (this.colorLegend) {
-                this.colorLegend.updateLegend(this.seedData);
+                
+                // Step 2: Push updated seed data to GPU
+                this.updateSeedTexture();
+                
+                // Step 3: Run JFA compute pass on GPU
+                const jfaStart = performance.now();
+                if (this.isWebGPURenderer()) {
+                    // WebGPU implementation uses seed data directly
+                    await this.gpuCompute.compute(this.seedData, this.numPoints);
+                } else {
+                    // WebGL implementation uses seed texture
+                    this.gpuCompute.compute(this.seedTexture, this.seedTextureSize, this.numPoints);
+                }
+                this.performanceStats.jfaTime = Math.round(performance.now() - jfaStart);
+                
+                // Step 4: Run analysis (WebGPU compute or CPU fallback)
+                const analysisStart = performance.now();
+                if (this.isWebGPURenderer() && this.analysisCompute) {
+                    // WebGPU implementation - run analysis compute pass
+                    const jfaTexture = this.gpuCompute.getOutputTexture();
+                    await this.analysisCompute.compute(jfaTexture, this.seedData);
+                    await this.analysisCompute.getResults(this.seedData);
+                } else {
+                    // WebGL implementation - fallback to CPU analysis
+                    const jfaOutput = this.gpuCompute.getOutputData();
+                    this.analyzer.analyze(jfaOutput, this.seedData, this.settings.volumeResolution);
+                }
+                this.performanceStats.analysisTime = Math.round(performance.now() - analysisStart);
+                
+                // Step 5: Update visualization
+                this.updateVisualization();
+                
+                // Step 6: Update debug visuals
+                if (this.settings.showDebugVisuals) {
+                    this.updateDebugVisuals();
+                }
+                
+                // Step 7: Update color legend
+                if (this.colorLegend) {
+                    this.colorLegend.updateLegend(this.seedData);
+                }
+            } else {
+                // When physics is disabled, just clear debug visuals if they're off
+                if (!this.settings.showDebugVisuals && this.debugGroup) {
+                    while(this.debugGroup.children.length > 0){
+                        this.debugGroup.remove(this.debugGroup.children[0]);
+                    }
+                }
+                
+                // Reset performance stats when not running
+                this.performanceStats.physicsTime = 0;
+                this.performanceStats.jfaTime = 0;
+                this.performanceStats.analysisTime = 0;
             }
             
             // Update physics statistics
@@ -375,15 +461,28 @@ export class HybridVoronoiSystem {
      * Update Voronoi cell visualization using volume renderer
      */
     updateCellVisualization() {
-        if (!this.volumeRenderer || !this.gpuCompute) return;
+        if (!this.gpuCompute) return;
         
-        const renderTarget = this.gpuCompute.getCurrentRenderTarget();
-        if (renderTarget) {
-            this.volumeRenderer.updateVolume(
-                renderTarget, 
-                this.settings.volumeResolution,
-                Math.ceil(Math.sqrt(this.settings.volumeResolution))
-            );
+        if (this.isWebGPURenderer() && this.tslVolumeRenderer) {
+            // WebGPU implementation - use TSL volume renderer
+            const jfaTexture = this.gpuCompute.getOutputTexture();
+            if (jfaTexture) {
+                this.tslVolumeRenderer.updateVolume(
+                    jfaTexture, 
+                    this.settings.volumeResolution,
+                    Math.ceil(Math.sqrt(this.settings.volumeResolution))
+                );
+            }
+        } else if (this.volumeRenderer) {
+            // WebGL implementation - use traditional volume renderer
+            const renderTarget = this.gpuCompute.getCurrentRenderTarget();
+            if (renderTarget) {
+                this.volumeRenderer.updateVolume(
+                    renderTarget, 
+                    this.settings.volumeResolution,
+                    Math.ceil(Math.sqrt(this.settings.volumeResolution))
+                );
+            }
         }
     }
     
@@ -506,6 +605,21 @@ export class HybridVoronoiSystem {
     }
     
     /**
+     * Toggle physics engine on/off
+     */
+    setPhysicsEnabled(enabled) {
+        this.physicsEnabled = enabled;
+        console.log(`🔍 Physics enabled set to: ${enabled}`);
+        
+        // If disabling physics, clear debug visuals if they're off
+        if (!enabled && !this.settings.showDebugVisuals && this.debugGroup) {
+            while(this.debugGroup.children.length > 0){
+                this.debugGroup.remove(this.debugGroup.children[0]);
+            }
+        }
+    }
+    
+    /**
      * Toggle debug visuals display
      */
     setShowDebugVisuals(show) {
@@ -531,6 +645,9 @@ export class HybridVoronoiSystem {
         while(this.debugGroup.children.length > 0){
             this.debugGroup.remove(this.debugGroup.children[0]);
         }
+        
+        // Only add visuals if the setting is enabled
+        if (!this.settings.showDebugVisuals) return;
         
         for (const seed of this.seedData) {
             if (!seed.centroid) continue;
