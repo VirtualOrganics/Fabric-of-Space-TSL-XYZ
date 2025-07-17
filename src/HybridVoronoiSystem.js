@@ -38,6 +38,9 @@ export class HybridVoronoiSystem {
         this.volumeRenderer = null;
         this.colorLegend = null;
         
+        // Debug visualization components
+        this.debugGroup = null;
+        
         // Performance tracking
         this.performanceStats = {
             jfaTime: 0,
@@ -56,6 +59,7 @@ export class HybridVoronoiSystem {
             colorByAcuteness: true,
             periodicBoundaries: false,
             pointSize: 3.0,
+            showDebugVisuals: true,
             physicsSettings: {
                 threshold: 10,
                 growthRate: 0.001,
@@ -215,6 +219,11 @@ export class HybridVoronoiSystem {
         this.pointsGroup.name = 'SeedPoints';
         this.scene.add(this.pointsGroup);
         
+        // Create debug visualization group
+        this.debugGroup = new THREE.Group();
+        this.debugGroup.name = 'DebugVisuals';
+        this.scene.add(this.debugGroup);
+        
         // Initialize volume renderer
         this.volumeRenderer.init(this.scene);
         
@@ -289,7 +298,12 @@ export class HybridVoronoiSystem {
             // Step 5: Update visualization
             this.updateVisualization();
             
-            // Step 6: Update color legend
+            // Step 6: Update debug visuals
+            if (this.settings.showDebugVisuals) {
+                this.updateDebugVisuals();
+            }
+            
+            // Step 7: Update color legend
             if (this.colorLegend) {
                 this.colorLegend.updateLegend(this.seedData);
             }
@@ -492,6 +506,62 @@ export class HybridVoronoiSystem {
     }
     
     /**
+     * Toggle debug visuals display
+     */
+    setShowDebugVisuals(show) {
+        this.settings.showDebugVisuals = show;
+        console.log(`🔍 Debug visuals set to: ${show}`);
+        
+        // If turning off, clear debug visuals immediately
+        if (!show && this.debugGroup) {
+            while(this.debugGroup.children.length > 0){
+                this.debugGroup.remove(this.debugGroup.children[0]);
+            }
+        }
+    }
+    
+    /**
+     * Update debug visuals showing centroids and seed-to-centroid arrows
+     * This is critical for understanding if the analyzer is working correctly
+     */
+    updateDebugVisuals() {
+        if (!this.debugGroup) return;
+        
+        // Clear previous debug visuals
+        while(this.debugGroup.children.length > 0){
+            this.debugGroup.remove(this.debugGroup.children[0]);
+        }
+        
+        for (const seed of this.seedData) {
+            if (!seed.centroid) continue;
+            
+            // 1. Draw a small sphere at the centroid's location (green)
+            const centroidGeom = new THREE.SphereGeometry(0.02, 8, 8);
+            const centroidMat = new THREE.MeshBasicMaterial({ color: 0x00ff00 }); // Green
+            const centroidMesh = new THREE.Mesh(centroidGeom, centroidMat);
+            centroidMesh.position.copy(seed.centroid);
+            this.debugGroup.add(centroidMesh);
+            
+            // 2. Draw an arrow from the seed to the centroid (yellow)
+            const dir = new THREE.Vector3().subVectors(seed.centroid, seed.position);
+            const length = dir.length();
+            
+            // Only draw arrow if there's a meaningful distance
+            if (length > 0.01) {
+                const arrowHelper = new THREE.ArrowHelper(
+                    dir.clone().normalize(), 
+                    seed.position, 
+                    length, 
+                    0xffff00, // Yellow
+                    length * 0.2, // Head length
+                    length * 0.1  // Head width
+                );
+                this.debugGroup.add(arrowHelper);
+            }
+        }
+    }
+    
+    /**
      * Clean up resources
      */
     dispose() {
@@ -519,6 +589,10 @@ export class HybridVoronoiSystem {
         
         if (this.pointsGroup) {
             this.scene.remove(this.pointsGroup);
+        }
+        
+        if (this.debugGroup) {
+            this.scene.remove(this.debugGroup);
         }
         
         console.log('✅ HybridVoronoiSystem disposed');

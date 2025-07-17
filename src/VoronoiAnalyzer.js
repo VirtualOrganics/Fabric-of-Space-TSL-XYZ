@@ -1,156 +1,238 @@
 import * as THREE from 'three';
 
 /**
- * VoronoiAnalyzer - CPU module for analyzing JFA output and calculating acute angles
+ * VoronoiAnalyzer - Optimized CPU module for analyzing JFA output
  * 
- * This class implements the CPU analysis described in Phase 3:
- * 1. Finds all junctions (Voronoi vertices) in the JFA output
- * 2. Calculates angles at each junction between seed vectors
- * 3. Counts acute angles for each cell
+ * This class implements the hybrid CPU/GPU pipeline with:
+ * 1. Robust centroid calculation using voxel summation method
+ * 2. Refined acute angle calculation using vertex-finding method for geometric sharpness
+ * 3. Separation of concerns: centroids for physics, vertices for angles
  */
 export class VoronoiAnalyzer {
     constructor() {
         this.vertices = [];
         this.analysisCache = new Map();
         this.lastAnalysisTime = 0;
+        this.dimensions = { width: 0, height: 0, depth: 0 };
+        this.seedData = [];
         
         // Temporary vectors for calculations (reused for performance)
         this.tempVec1 = new THREE.Vector3();
         this.tempVec2 = new THREE.Vector3();
         this.tempVec3 = new THREE.Vector3();
         
-        console.log('🔍 VoronoiAnalyzer constructor completed');
+        console.log('🔍 VoronoiAnalyzer (Optimized) constructor completed');
     }
     
     /**
      * Main analysis function - processes JFA output and updates seed data
+     * Uses the hybrid approach: voxel summation for centroids, vertex-finding for angles
      */
-    analyze(jfaOutput, seedData, volumeSize) {
+    analyze(jfaBuffer, seedData, volumeSize) {
         const startTime = performance.now();
         
-        if (!jfaOutput || !jfaOutput.data) {
-            console.warn('⚠️ No JFA output data provided');
+        if (!jfaBuffer || !seedData) {
+            console.warn('⚠️ Invalid input data provided');
             return;
         }
         
-        console.log(`🔍 Starting analysis of ${volumeSize}³ volume...`);
+        // Store references for internal methods
+        this.seedData = seedData;
+        this.dimensions = { width: volumeSize, height: volumeSize, depth: volumeSize };
+        
+        console.log(`🔍 Starting optimized analysis of ${volumeSize}³ volume...`);
         
         try {
-            // Reset acute counts for all seeds
-            this.resetAcuteCounts(seedData);
-            
-            // Clear previous analysis
-            this.vertices = [];
-            
-            // Step 1: Find all junctions (Voronoi vertices)
-            this.findJunctions(jfaOutput, volumeSize);
-            
-            // Step 2: Calculate angles at each junction
-            this.calculateAngles(seedData);
+            // Clear previous data
+            for (const seed of this.seedData) {
+                seed.acuteCount = 0;
+                // Initialize centroid calculation data
+                seed.voxelCount = 0;
+                seed.positionSum = new THREE.Vector3(0, 0, 0);
+                seed.centroid = new THREE.Vector3();
+            }
+
+            // Run the two main analysis steps
+            this._calculateVoxelSummation(jfaBuffer); // New robust centroid method
+            this._calculateAnglesFromJunctions(jfaBuffer); // Refined vertex-finding method for angles
             
             this.lastAnalysisTime = Math.round(performance.now() - startTime);
             
-            console.log(`✅ Analysis completed in ${this.lastAnalysisTime}ms`);
+            console.log(`✅ Optimized analysis completed in ${this.lastAnalysisTime}ms`);
             console.log(`📊 Found ${this.vertices.length} Voronoi vertices`);
             
+            // Log statistics
+            this.logAnalysisStatistics();
+            
         } catch (error) {
-            console.error('❌ Error in Voronoi analysis:', error);
+            console.error('❌ Error in optimized Voronoi analysis:', error);
             this.lastAnalysisTime = 0;
         }
     }
     
     /**
-     * Reset acute counts for all seeds
+     * Phase 1: Robust Centroid Calculation using Voxel Summation
+     * This is the superior method that avoids boundary issues
      */
-    resetAcuteCounts(seedData) {
-        seedData.forEach(seed => {
-            seed.acuteCount = 0;
-        });
+    _calculateVoxelSummation(buffer) {
+        console.log('🔍 Calculating centroids using voxel summation...');
+        
+        const { width, height, depth } = this.dimensions;
+        const totalVoxels = width * height * depth;
+        
+        // Single, cache-friendly loop over all voxels
+        for (let i = 0; i < totalVoxels; i++) {
+            const index = i * 4;
+            
+            // Get cell ID from alpha channel (normalized 0-1, convert to seed index)
+            const cellIDNormalized = buffer[index + 3];
+            const cellID = Math.round(cellIDNormalized * this.seedData.length) - 1;
+            
+            if (cellID >= 0 && cellID < this.seedData.length) {
+                const seed = this.seedData[cellID];
+                
+                // Get the (x,y,z) coordinate of this voxel
+                const x = i % width;
+                const y = Math.floor(i / width) % height;
+                const z = Math.floor(i / (width * height));
+                
+                // Add to the running sum for this cell
+                seed.positionSum.x += x;
+                seed.positionSum.y += y;
+                seed.positionSum.z += z;
+                seed.voxelCount++;
+            }
+        }
+        
+        // Finalize the centroid calculation for each cell
+        let validCentroids = 0;
+        for (const seed of this.seedData) {
+            if (seed.voxelCount > 0) {
+                seed.centroid.copy(seed.positionSum).divideScalar(seed.voxelCount);
+                
+                // CRUCIAL: Convert from texture space [0, dim] to world space [-1, 1]
+                seed.centroid.x = (seed.centroid.x / width) * 2 - 1;
+                seed.centroid.y = (seed.centroid.y / height) * 2 - 1;
+                seed.centroid.z = (seed.centroid.z / depth) * 2 - 1;
+                
+                validCentroids++;
+            } else {
+                // If a cell has no voxels, its centroid is its own position
+                seed.centroid.copy(seed.position);
+                console.warn(`⚠️ Cell ${this.seedData.indexOf(seed)} has no voxels, using seed position as centroid`);
+            }
+        }
+        
+        console.log(`✅ Calculated ${validCentroids} valid centroids`);
     }
     
     /**
-     * Find all junctions (Voronoi vertices) in the JFA output
+     * Phase 2: Refined Acute Angle Calculation using Vertex-Finding
+     * Uses the vertex-finding method only for calculating angles (geometric sharpness)
      */
-    findJunctions(jfaOutput, volumeSize) {
-        console.log('🔍 Finding junctions...');
+    _calculateAnglesFromJunctions(buffer) {
+        console.log('📐 Calculating angles from junctions...');
         
-        const { data, width, height, slicesPerRow } = jfaOutput;
-        const atlasSize = width;
+        // Find junctions using the existing robust method
+        const vertices = this._findJunctions(buffer);
+        this.vertices = vertices; // Store for debugging
         
-        // Helper function to convert atlas coordinates to volume coordinates
-        const atlasToVolume = (atlasX, atlasY) => {
-            const sliceX = Math.floor(atlasX / volumeSize);
-            const sliceY = Math.floor(atlasY / volumeSize);
-            const slice = sliceY * slicesPerRow + sliceX;
+        // Use the superior "seed-to-vertex" angle calculation
+        const vA = new THREE.Vector3();
+        const vB = new THREE.Vector3();
+        
+        let totalAngles = 0;
+        let acuteAngles = 0;
+        
+        for (const vertex of vertices) {
+            const ids = vertex.cellIDs;
+            if (ids.length < 2) continue;
             
-            const inSliceX = atlasX % volumeSize;
-            const inSliceY = atlasY % volumeSize;
-            
-            return {
-                x: inSliceX / volumeSize,
-                y: inSliceY / volumeSize,
-                z: slice / volumeSize,
-                valid: slice < volumeSize
-            };
-        };
+            // Check all pairs of cells meeting at this vertex
+            for (let i = 0; i < ids.length; i++) {
+                for (let j = i + 1; j < ids.length; j++) {
+                    const idA = ids[i];
+                    const idB = ids[j];
+                    
+                    if (idA >= 0 && idA < this.seedData.length && 
+                        idB >= 0 && idB < this.seedData.length) {
+                        
+                        const seedA = this.seedData[idA];
+                        const seedB = this.seedData[idB];
+                        
+                        // Calculate vectors from vertex to each seed
+                        vA.subVectors(seedA.position, vertex.position).normalize();
+                        vB.subVectors(seedB.position, vertex.position).normalize();
+                        
+                        // Calculate angle between vectors
+                        const dotProduct = vA.dot(vB);
+                        const angle = Math.acos(Math.max(-1.0, Math.min(1.0, dotProduct)));
+                        
+                        totalAngles++;
+                        
+                        // Count acute angles (< 90 degrees)
+                        if (angle < Math.PI / 2.0) {
+                            seedA.acuteCount++;
+                            seedB.acuteCount++;
+                            acuteAngles++;
+                        }
+                    }
+                }
+            }
+        }
         
-        // Helper function to get cell ID from atlas data
-        const getCellID = (atlasX, atlasY) => {
-            if (atlasX < 0 || atlasX >= atlasSize || atlasY < 0 || atlasY >= atlasSize) {
-                return 0;
+        console.log(`✅ Processed ${totalAngles} angles, ${acuteAngles} acute (${Math.round(acuteAngles/totalAngles*100)}%)`);
+    }
+    
+    /**
+     * Find junctions (Voronoi vertices) where 4+ cells meet
+     * This method remains the same as it's already robust
+     */
+    _findJunctions(buffer) {
+        const { width, height, depth } = this.dimensions;
+        const vertices = [];
+        
+        // Helper function to get cell ID from 3D coordinates
+        const getCellID = (x, y, z) => {
+            if (x < 0 || x >= width || y < 0 || y >= height || z < 0 || z >= depth) {
+                return -1;
             }
             
-            const index = (atlasY * atlasSize + atlasX) * 4;
-            return data[index + 3]; // Cell ID is in the alpha channel
+            const index = (z * width * height + y * width + x) * 4;
+            const cellIDNormalized = buffer[index + 3];
+            return Math.round(cellIDNormalized * this.seedData.length) - 1;
         };
         
         // Scan for junctions by checking 2x2x2 cubes in 3D space
-        for (let z = 0; z < volumeSize - 1; z++) {
-            for (let y = 0; y < volumeSize - 1; y++) {
-                for (let x = 0; x < volumeSize - 1; x++) {
-                    // Convert 3D coordinates to atlas coordinates
-                    const sliceX = z % slicesPerRow;
-                    const sliceY = Math.floor(z / slicesPerRow);
-                    
-                    const atlasX = sliceX * volumeSize + x;
-                    const atlasY = sliceY * volumeSize + y;
-                    
+        for (let z = 0; z < depth - 1; z++) {
+            for (let y = 0; y < height - 1; y++) {
+                for (let x = 0; x < width - 1; x++) {
                     // Get the 8 cell IDs in the 2x2x2 cube
                     const cellIDs = new Set();
                     
-                    // Current slice (z)
-                    cellIDs.add(getCellID(atlasX, atlasY));
-                    cellIDs.add(getCellID(atlasX + 1, atlasY));
-                    cellIDs.add(getCellID(atlasX, atlasY + 1));
-                    cellIDs.add(getCellID(atlasX + 1, atlasY + 1));
+                    // Add all 8 corner cell IDs
+                    cellIDs.add(getCellID(x, y, z));
+                    cellIDs.add(getCellID(x + 1, y, z));
+                    cellIDs.add(getCellID(x, y + 1, z));
+                    cellIDs.add(getCellID(x + 1, y + 1, z));
+                    cellIDs.add(getCellID(x, y, z + 1));
+                    cellIDs.add(getCellID(x + 1, y, z + 1));
+                    cellIDs.add(getCellID(x, y + 1, z + 1));
+                    cellIDs.add(getCellID(x + 1, y + 1, z + 1));
                     
-                    // Next slice (z + 1)
-                    const nextSliceX = (z + 1) % slicesPerRow;
-                    const nextSliceY = Math.floor((z + 1) / slicesPerRow);
-                    const nextAtlasX = nextSliceX * volumeSize + x;
-                    const nextAtlasY = nextSliceY * volumeSize + y;
-                    
-                    if (z + 1 < volumeSize) {
-                        cellIDs.add(getCellID(nextAtlasX, nextAtlasY));
-                        cellIDs.add(getCellID(nextAtlasX + 1, nextAtlasY));
-                        cellIDs.add(getCellID(nextAtlasX, nextAtlasY + 1));
-                        cellIDs.add(getCellID(nextAtlasX + 1, nextAtlasY + 1));
-                    }
-                    
-                    // Remove invalid cell IDs (0 means no cell)
-                    cellIDs.delete(0);
+                    // Remove invalid cell IDs
+                    cellIDs.delete(-1);
                     
                     // If we have 4 or more different cells meeting, it's a proper 3D junction
-                    // (In 3D, we need at least 4 cells to form a proper Voronoi vertex)
                     if (cellIDs.size >= 4) {
-                        // Convert back to world coordinates [-1, 1]
+                        // Convert to world coordinates [-1, 1]
                         const worldPos = new THREE.Vector3(
-                            (x + 0.5) / volumeSize * 2 - 1,
-                            (y + 0.5) / volumeSize * 2 - 1,
-                            (z + 0.5) / volumeSize * 2 - 1
+                            (x + 0.5) / width * 2 - 1,
+                            (y + 0.5) / height * 2 - 1,
+                            (z + 0.5) / depth * 2 - 1
                         );
                         
-                        this.vertices.push({
+                        vertices.push({
                             position: worldPos,
                             cellIDs: Array.from(cellIDs)
                         });
@@ -159,135 +241,61 @@ export class VoronoiAnalyzer {
             }
         }
         
-        console.log(`✅ Found ${this.vertices.length} junctions`);
+        console.log(`✅ Found ${vertices.length} junctions`);
+        return vertices;
     }
     
     /**
-     * Calculate angles at each junction and count acute angles
+     * Log comprehensive analysis statistics
      */
-    calculateAngles(seedData) {
-        console.log('📐 Calculating angles...');
+    logAnalysisStatistics() {
+        // Centroid statistics
+        const centroidDistances = this.seedData.map(seed => 
+            seed.position.distanceTo(seed.centroid)
+        );
+        const avgCentroidDistance = centroidDistances.reduce((a, b) => a + b, 0) / centroidDistances.length;
+        const maxCentroidDistance = Math.max(...centroidDistances);
         
-        let totalAngles = 0;
-        let acuteAngles = 0;
+        // Acute count statistics
+        const acuteCounts = this.seedData.map(seed => seed.acuteCount);
+        const minAcute = Math.min(...acuteCounts);
+        const maxAcute = Math.max(...acuteCounts);
+        const avgAcute = acuteCounts.reduce((a, b) => a + b, 0) / acuteCounts.length;
         
-        // Process each Voronoi vertex
-        this.vertices.forEach(vertex => {
-            const { position, cellIDs } = vertex;
-            
-            // For each unique pair of cells at this vertex
-            for (let i = 0; i < cellIDs.length; i++) {
-                for (let j = i + 1; j < cellIDs.length; j++) {
-                    const cellID1 = cellIDs[i];
-                    const cellID2 = cellIDs[j];
-                    
-                    // Convert normalized cell IDs back to seed indices
-                    const seedIndex1 = Math.round(cellID1 * seedData.length) - 1;
-                    const seedIndex2 = Math.round(cellID2 * seedData.length) - 1;
-                    
-                    // Validate seed indices
-                    if (seedIndex1 >= 0 && seedIndex1 < seedData.length &&
-                        seedIndex2 >= 0 && seedIndex2 < seedData.length &&
-                        seedIndex1 !== seedIndex2) {
-                        
-                        const seed1 = seedData[seedIndex1];
-                        const seed2 = seedData[seedIndex2];
-                        
-                        // Calculate vectors from vertex to each seed
-                        this.tempVec1.subVectors(seed1.position, position);
-                        this.tempVec2.subVectors(seed2.position, position);
-                        
-                        // Check for zero-length vectors
-                        const len1 = this.tempVec1.length();
-                        const len2 = this.tempVec2.length();
-                        
-                        if (len1 > 0.001 && len2 > 0.001) {
-                            this.tempVec1.normalize();
-                            this.tempVec2.normalize();
-                            
-                            // Calculate angle between vectors
-                            const dotProduct = this.tempVec1.dot(this.tempVec2);
-                            const angle = Math.acos(Math.max(-1, Math.min(1, dotProduct)));
-                            
-                            totalAngles++;
-                            
-                            // Check if angle is acute (< 90 degrees)
-                            if (angle < Math.PI / 2) {
-                                acuteAngles++;
-                                
-                                // Increment acute count for both seeds
-                                seed1.acuteCount++;
-                                seed2.acuteCount++;
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        // Voxel count statistics
+        const voxelCounts = this.seedData.map(seed => seed.voxelCount);
+        const minVoxels = Math.min(...voxelCounts);
+        const maxVoxels = Math.max(...voxelCounts);
+        const avgVoxels = voxelCounts.reduce((a, b) => a + b, 0) / voxelCounts.length;
         
-        console.log(`✅ Processed ${totalAngles} angles, ${acuteAngles} acute (${Math.round(acuteAngles/totalAngles*100)}%)`);
+        console.log(`📊 Centroid Analysis: avg_distance=${avgCentroidDistance.toFixed(3)}, max_distance=${maxCentroidDistance.toFixed(3)}`);
+        console.log(`📊 Acute Count: min=${minAcute}, max=${maxAcute}, avg=${avgAcute.toFixed(1)}`);
+        console.log(`📊 Voxel Count: min=${minVoxels}, max=${maxVoxels}, avg=${avgVoxels.toFixed(1)}`);
         
-        // Log statistics about acute counts
-        this.logAcuteStatistics(seedData);
-        
-        // Debug: Log some example calculations
-        this.debugAnalysis(seedData);
-    }
-    
-    /**
-     * Log statistics about acute angle counts
-     */
-    logAcuteStatistics(seedData) {
-        const acuteCounts = seedData.map(seed => seed.acuteCount);
-        const min = Math.min(...acuteCounts);
-        const max = Math.max(...acuteCounts);
-        const avg = acuteCounts.reduce((a, b) => a + b, 0) / acuteCounts.length;
-        
-        // Count distribution
-        const distribution = {};
+        // Distribution analysis
+        const acuteDistribution = {};
         acuteCounts.forEach(count => {
-            const range = Math.floor(count / 10) * 10;
-            distribution[range] = (distribution[range] || 0) + 1;
+            const range = Math.floor(count / 5) * 5;
+            acuteDistribution[range] = (acuteDistribution[range] || 0) + 1;
         });
         
-        console.log(`📊 Acute count statistics: min=${min}, max=${max}, avg=${avg.toFixed(1)}`);
-        console.log(`📊 Distribution by ranges:`, distribution);
+        console.log(`📊 Acute count distribution:`, acuteDistribution);
     }
     
     /**
-     * Debug analysis to understand the acute angle calculations
-     */
-    debugAnalysis(seedData) {
-        console.log(`🔍 Debug: Found ${this.vertices.length} Voronoi vertices`);
-        
-        // Sample a few vertices for detailed analysis
-        const sampleVertices = this.vertices.slice(0, Math.min(5, this.vertices.length));
-        
-        sampleVertices.forEach((vertex, i) => {
-            console.log(`🔍 Vertex ${i}: position=(${vertex.position.x.toFixed(2)}, ${vertex.position.y.toFixed(2)}, ${vertex.position.z.toFixed(2)}), cells=[${vertex.cellIDs.join(', ')}]`);
-            
-            // Check if cell IDs are valid
-            vertex.cellIDs.forEach(cellID => {
-                const seedIndex = Math.round(cellID * seedData.length) - 1;
-                if (seedIndex < 0 || seedIndex >= seedData.length) {
-                    console.warn(`⚠️ Invalid seed index: ${seedIndex} from cellID ${cellID}`);
-                }
-            });
-        });
-        
-        // Sample a few seeds with their acute counts
-        const sampleSeeds = seedData.slice(0, Math.min(10, seedData.length));
-        console.log(`🔍 Sample seed acute counts:`, sampleSeeds.map((seed, i) => `${i}:${seed.acuteCount}`).join(', '));
-    }
-    
-    /**
-     * Get analysis results for visualization
+     * Get analysis results for visualization and debugging
      */
     getAnalysisResults() {
         return {
             vertices: this.vertices,
             lastAnalysisTime: this.lastAnalysisTime,
-            vertexCount: this.vertices.length
+            vertexCount: this.vertices.length,
+            seedData: this.seedData.map(seed => ({
+                position: seed.position.clone(),
+                centroid: seed.centroid.clone(),
+                acuteCount: seed.acuteCount,
+                voxelCount: seed.voxelCount
+            }))
         };
     }
     
@@ -298,94 +306,19 @@ export class VoronoiAnalyzer {
         return {
             lastAnalysisTime: this.lastAnalysisTime,
             vertexCount: this.vertices.length,
-            cacheSize: this.analysisCache.size
+            seedCount: this.seedData.length,
+            avgVoxelsPerSeed: this.seedData.length > 0 ? 
+                this.seedData.reduce((sum, seed) => sum + seed.voxelCount, 0) / this.seedData.length : 0
         };
     }
     
     /**
-     * Clear analysis cache
+     * Clear analysis cache and reset state
      */
     clearCache() {
         this.analysisCache.clear();
+        this.vertices = [];
         console.log('🧹 Analysis cache cleared');
-    }
-    
-    /**
-     * Helper function to calculate angle between two vectors
-     */
-    calculateAngle(vec1, vec2) {
-        const dot = vec1.dot(vec2);
-        const mag1 = vec1.length();
-        const mag2 = vec2.length();
-        
-        if (mag1 === 0 || mag2 === 0) return 0;
-        
-        const cosAngle = dot / (mag1 * mag2);
-        return Math.acos(Math.max(-1, Math.min(1, cosAngle)));
-    }
-    
-    /**
-     * Advanced analysis with cell-specific metrics
-     */
-    analyzeAdvanced(jfaOutput, seedData, volumeSize) {
-        console.log('🔬 Running advanced analysis...');
-        
-        // Run basic analysis first
-        this.analyze(jfaOutput, seedData, volumeSize);
-        
-        // Additional metrics for each cell
-        seedData.forEach((seed, index) => {
-            // Calculate cell volume (approximate)
-            seed.cellVolume = this.estimateCellVolume(index, jfaOutput, volumeSize);
-            
-            // Calculate cell surface area (approximate)
-            seed.cellSurfaceArea = this.estimateCellSurfaceArea(index, jfaOutput, volumeSize);
-            
-            // Calculate cell regularity metric
-            seed.cellRegularity = this.calculateCellRegularity(seed);
-        });
-        
-        console.log('✅ Advanced analysis completed');
-    }
-    
-    /**
-     * Estimate cell volume from JFA output
-     */
-    estimateCellVolume(seedIndex, jfaOutput, volumeSize) {
-        const { data, width, height } = jfaOutput;
-        const targetCellID = (seedIndex + 1) / jfaOutput.numPoints;
-        
-        let voxelCount = 0;
-        
-        // Count voxels belonging to this cell
-        for (let i = 3; i < data.length; i += 4) {
-            if (Math.abs(data[i] - targetCellID) < 0.001) {
-                voxelCount++;
-            }
-        }
-        
-        // Convert to normalized volume
-        const totalVoxels = volumeSize * volumeSize * volumeSize;
-        return voxelCount / totalVoxels;
-    }
-    
-    /**
-     * Estimate cell surface area from JFA output
-     */
-    estimateCellSurfaceArea(seedIndex, jfaOutput, volumeSize) {
-        // This is a simplified estimation
-        // In a full implementation, we would analyze boundary voxels
-        return 0; // Placeholder
-    }
-    
-    /**
-     * Calculate cell regularity metric
-     */
-    calculateCellRegularity(seed) {
-        // Simple regularity metric based on acute count
-        // Lower acute count = more regular
-        const maxExpectedAcute = 20; // Rough estimate
-        return Math.max(0, 1 - (seed.acuteCount / maxExpectedAcute));
     }
     
     /**
@@ -396,6 +329,7 @@ export class VoronoiAnalyzer {
         
         this.vertices = [];
         this.analysisCache.clear();
+        this.seedData = [];
         
         console.log('✅ VoronoiAnalyzer disposed');
     }

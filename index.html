@@ -346,6 +346,10 @@
                 <input type="checkbox" id="colorByAcuteness" checked>
                 <label>Color by Acuteness</label>
             </div>
+            <div class="checkbox-container">
+                <input type="checkbox" id="showDebugVisuals" checked>
+                <label>Show Debug Visuals</label>
+            </div>
         </div>
         
         <!-- Performance Stats -->
@@ -541,6 +545,12 @@
             document.getElementById('colorByAcuteness').addEventListener('change', (e) => {
                 if (hybridSystem) {
                     hybridSystem.setColorByAcuteness(e.target.checked);
+                }
+            });
+            
+            document.getElementById('showDebugVisuals').addEventListener('change', (e) => {
+                if (hybridSystem) {
+                    hybridSystem.setShowDebugVisuals(e.target.checked);
                 }
             });
             
