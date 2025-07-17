@@ -418,57 +418,65 @@ export class PureGPUSystem {
                 if (centroidData.voxelCount > 0.0) {
                     // The centroid has already been finalized to world coordinates
                     let centroid = centroidData.positionSum;
-                    let direction = normalize(centroid - seed.position);
+                    let delta = centroid - seed.position;
                     
-                    // Determine growth/shrink based on acute count and mode
-                    var shouldGrow = false;
-                    var shouldShrink = false;
-                    
-                    let threshold = u32(settings.threshold);
-                    
-                    switch (settings.mode) {
-                        case 0u: { // balanced
-                            shouldGrow = acuteCount < threshold;
-                            shouldShrink = acuteCount > threshold;
+                    // Only proceed if we have a valid direction vector
+                    let distance = length(delta);
+                    if (distance > 0.001) {
+                        let direction = delta / distance; // Manual normalization to avoid issues
+                        
+                        // Determine growth/shrink based on acute count and mode
+                        var shouldGrow = false;
+                        var shouldShrink = false;
+                        
+                        let threshold = u32(settings.threshold);
+                        
+                        switch (settings.mode) {
+                            case 0u: { // balanced
+                                shouldGrow = acuteCount < threshold;
+                                shouldShrink = acuteCount > threshold;
+                            }
+                            case 1u: { // growthOnly
+                                shouldGrow = acuteCount < threshold;
+                            }
+                            case 2u: { // shrinkOnly
+                                shouldShrink = acuteCount > threshold;
+                            }
+                            case 3u: { // inverse
+                                shouldGrow = acuteCount > threshold;
+                                shouldShrink = acuteCount < threshold;
+                            }
+                            default: {}
                         }
-                        case 1u: { // growthOnly
-                            shouldGrow = acuteCount < threshold;
+                        
+                        // Apply forces
+                        var force = vec3f(0.0);
+                        if (shouldGrow) {
+                            // GROW: Move seed AWAY from centroid to expand the cell
+                            force = -direction * settings.growthRate;
+                            atomicAdd(&stats.growing, 1u);
+                        } else if (shouldShrink) {
+                            // SHRINK: Move seed TOWARD centroid to contract the cell
+                            force = direction * settings.shrinkRate;
+                            atomicAdd(&stats.shrinking, 1u);
                         }
-                        case 2u: { // shrinkOnly
-                            shouldShrink = acuteCount > threshold;
+                        
+                        // Update velocity with momentum and damping
+                        seed.velocity = seed.velocity * settings.momentum + force;
+                        seed.velocity = seed.velocity * (1.0 - settings.damping);
+                        
+                        // Clamp velocity
+                        let speed = length(seed.velocity);
+                        if (speed > settings.maxSpeed) {
+                            seed.velocity = normalize(seed.velocity) * settings.maxSpeed;
                         }
-                        case 3u: { // inverse
-                            shouldGrow = acuteCount > threshold;
-                            shouldShrink = acuteCount < threshold;
-                        }
-                        default: {}
+                        
+                        // Update position
+                        seed.position = seed.position + seed.velocity * settings.deltaTime;
+                        
+                        // Keep seeds in bounds [-1, 1]
+                        seed.position = clamp(seed.position, vec3f(-1.0), vec3f(1.0));
                     }
-                    
-                    // Apply forces
-                    var force = vec3f(0.0);
-                    if (shouldGrow) {
-                        force = direction * settings.growthRate;
-                        atomicAdd(&stats.growing, 1u);
-                    } else if (shouldShrink) {
-                        force = -direction * settings.shrinkRate;
-                        atomicAdd(&stats.shrinking, 1u);
-                    }
-                    
-                    // Update velocity with momentum and damping
-                    seed.velocity = seed.velocity * settings.momentum + force;
-                    seed.velocity = seed.velocity * (1.0 - settings.damping);
-                    
-                    // Clamp velocity
-                    let speed = length(seed.velocity);
-                    if (speed > settings.maxSpeed) {
-                        seed.velocity = normalize(seed.velocity) * settings.maxSpeed;
-                    }
-                    
-                    // Update position
-                    seed.position = seed.position + seed.velocity * settings.deltaTime;
-                    
-                    // Keep seeds in bounds [-1, 1]
-                    seed.position = clamp(seed.position, vec3f(-1.0), vec3f(1.0));
                 }
                 
                 // Write back updated seed
