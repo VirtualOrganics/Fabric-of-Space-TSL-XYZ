@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fabric of Space Z - Hybrid JFA + Physics System</title>
+    
+    <!-- Import Map for ES Modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.164.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.0/examples/jsm/"
+            }
+        }
+    </script>
+    
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            overflow: hidden;
+            color: #fff;
+        }
+        
+        canvas { 
+            display: block; 
+        }
+        
+        .controls-panel {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 1000;
+            max-width: 350px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        .controls-panel h3 {
+            margin: 0 0 15px 0;
+            color: #00ffff;
+            font-size: 18px;
+            text-align: center;
+            border-bottom: 2px solid #00ffff;
+            padding-bottom: 10px;
+        }
+        
+        .control-group {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            border-left: 3px solid #00ffff;
+        }
+        
+        .control-group h4 {
+            margin: 0 0 10px 0;
+            color: #ffff00;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .control-item {
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .control-item label {
+            font-size: 12px;
+            color: #ccc;
+            margin-right: 10px;
+            min-width: 80px;
+        }
+        
+        input[type="range"] {
+            flex: 1;
+            margin: 0 10px;
+            background: transparent;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #00ffff;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #00ffff;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+        }
+        
+        .value-display {
+            min-width: 60px;
+            text-align: right;
+            font-size: 12px;
+            color: #00ffff;
+            font-weight: bold;
+        }
+        
+        button {
+            background: linear-gradient(45deg, #00ffff, #0080ff);
+            color: #000;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+            margin: 5px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.3);
+        }
+        
+        button:hover {
+            background: linear-gradient(45deg, #0080ff, #00ffff);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 255, 255, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .checkbox-container input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.2);
+        }
+        
+        .stats-display {
+            background: rgba(0, 255, 255, 0.1);
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        
+        .stats-display .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        
+        .stats-display .stat-value {
+            color: #00ffff;
+            font-weight: bold;
+        }
+        
+        .toggle-panel-btn {
+            position: fixed;
+            top: 20px;
+            right: 320px;
+            background: rgba(0, 255, 255, 0.3);
+            border: 1px solid #00ffff;
+            color: #00ffff;
+            padding: 10px 15px;
+            cursor: pointer;
+            font-size: 14px;
+            border-radius: 8px;
+            z-index: 1001;
+            transition: all 0.3s ease;
+        }
+        
+        .toggle-panel-btn:hover {
+            background: rgba(0, 255, 255, 0.5);
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.5);
+        }
+        
+        .controls-panel.hidden {
+            transform: translateX(-120%);
+        }
+        
+        .performance-warning {
+            background: rgba(255, 165, 0, 0.2);
+            border: 1px solid #ffa500;
+            color: #ffa500;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        .success-message {
+            background: rgba(0, 255, 0, 0.2);
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-size: 12px;
+            text-align: center;
+        }
+        
+        /* Scrollbar styling */
+        .controls-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .controls-panel::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        
+        .controls-panel::-webkit-scrollbar-thumb {
+            background: #00ffff;
+            border-radius: 4px;
+        }
+        
+        .controls-panel::-webkit-scrollbar-thumb:hover {
+            background: #0080ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="toggle-panel-btn" id="togglePanel">Hide Panel</div>
+    
+    <div class="controls-panel" id="controlsPanel">
+        <h3>🌌 Fabric of Space Z</h3>
+        <p style="font-size: 12px; color: #aaa; text-align: center; margin-bottom: 20px;">
+            Hybrid JFA + Physics System
+        </p>
+        
+        <!-- Basic Generation Controls -->
+        <div class="control-group">
+            <h4>🎯 Generation</h4>
+            <div class="control-item">
+                <label>Points:</label>
+                <input type="range" id="numPoints" min="10" max="1000" value="50">
+                <span class="value-display" id="numPointsValue">50</span>
+            </div>
+            <div class="control-item">
+                <label>Resolution:</label>
+                <select id="volumeResolution" style="background: #333; color: #fff; border: 1px solid #666; padding: 5px; border-radius: 4px;">
+                    <option value="32">32³</option>
+                    <option value="64" selected>64³</option>
+                    <option value="128">128³</option>
+                    <option value="256">256³</option>
+                </select>
+            </div>
+            <div class="checkbox-container">
+                <input type="checkbox" id="periodicBoundaries">
+                <label>Periodic Boundaries</label>
+            </div>
+            <button id="regenerateBtn">🔄 Regenerate</button>
+        </div>
+        
+        <!-- Physics Controls -->
+        <div class="control-group">
+            <h4>⚡ Physics Engine</h4>
+            <div class="checkbox-container">
+                <input type="checkbox" id="enablePhysics" checked>
+                <label>Enable Physics</label>
+            </div>
+            <div class="control-item">
+                <label>Threshold:</label>
+                <input type="range" id="acuteThreshold" min="0" max="60" value="10" step="1">
+                <span class="value-display" id="acuteThresholdValue">10</span>
+            </div>
+            <div class="control-item">
+                <label>Growth Rate:</label>
+                <input type="range" id="growthRate" min="0.0001" max="0.01" value="0.001" step="0.0001">
+                <span class="value-display" id="growthRateValue">0.001</span>
+            </div>
+            <div class="control-item">
+                <label>Force Str:</label>
+                <input type="range" id="forceStrength" min="0.1" max="5.0" value="1.0" step="0.1">
+                <span class="value-display" id="forceStrengthValue">1.0</span>
+            </div>
+            <div class="control-item">
+                <label>Mode:</label>
+                <select id="growthMode" style="background: #333; color: #fff; border: 1px solid #666; padding: 5px; border-radius: 4px; width: 100%;">
+                    <option value="balanced">+ Acute = + / - Acute = -</option>
+                    <option value="growthOnly">+ Acute = + (only)</option>
+                    <option value="shrinkOnly">+ Acute = - (only)</option>
+                    <option value="inverse">+ Acute = - / - Acute = +</option>
+                </select>
+            </div>
+            <button id="startPhysicsBtn">▶️ Start Physics</button>
+            <button id="stopPhysicsBtn" disabled>⏸️ Stop Physics</button>
+        </div>
+        
+        <!-- Visualization Controls -->
+        <div class="control-group">
+            <h4>🎨 Visualization</h4>
+            <div class="control-item">
+                <label>Transparency:</label>
+                <input type="range" id="transparency" min="0" max="1" value="0.7" step="0.1">
+                <span class="value-display" id="transparencyValue">0.7</span>
+            </div>
+            <div class="checkbox-container">
+                <input type="checkbox" id="showEdges" checked>
+                <label>Show Edges</label>
+            </div>
+            <div class="checkbox-container">
+                <input type="checkbox" id="showPoints" checked>
+                <label>Show Points</label>
+            </div>
+            <div class="control-item">
+                <label>Point Size:</label>
+                <input type="range" id="pointSize" min="1" max="10" value="3" step="0.5">
+                <span class="value-display" id="pointSizeValue">3</span>
+            </div>
+            <div class="checkbox-container">
+                <input type="checkbox" id="colorByAcuteness" checked>
+                <label>Color by Acuteness</label>
+            </div>
+        </div>
+        
+        <!-- Performance Stats -->
+        <div class="control-group">
+            <h4>📊 Performance</h4>
+            <div class="stats-display">
+                <div class="stat-item">
+                    <span>FPS:</span>
+                    <span class="stat-value" id="fpsValue">--</span>
+                </div>
+                <div class="stat-item">
+                    <span>Frame Time:</span>
+                    <span class="stat-value" id="frameTimeValue">--</span>
+                </div>
+                <div class="stat-item">
+                    <span>JFA Time:</span>
+                    <span class="stat-value" id="jfaTimeValue">--</span>
+                </div>
+                <div class="stat-item">
+                    <span>Analysis Time:</span>
+                    <span class="stat-value" id="analysisTimeValue">--</span>
+                </div>
+                <div class="stat-item">
+                    <span>Boundaries:</span>
+                    <span class="stat-value" id="boundariesValue">Non-Periodic</span>
+                </div>
+                <div class="stat-item">
+                    <span>Physics Time:</span>
+                    <span class="stat-value" id="physicsTimeValue">--</span>
+                </div>
+                <div class="stat-item">
+                    <span>Growing Cells:</span>
+                    <span class="stat-value" id="growingCellsValue">--</span>
+                </div>
+                <div class="stat-item">
+                    <span>Shrinking Cells:</span>
+                    <span class="stat-value" id="shrinkingCellsValue">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Three.js Scene Container -->
+    <div id="sceneContainer"></div>
+    
+    <!-- Main Application Script -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { HybridVoronoiSystem } from './src/HybridVoronoiSystem.js';
+        
+        // Global application state
+        let scene, camera, renderer, controls;
+        let hybridSystem;
+        let animationId;
+        let clock = new THREE.Clock();
+        let stats = {
+            fps: 0,
+            frameTime: 0,
+            jfaTime: 0,
+            analysisTime: 0,
+            physicsTime: 0,
+            growingCells: 0,
+            shrinkingCells: 0
+        };
+        
+        // Performance monitoring
+        let frameCount = 0;
+        let lastTime = performance.now();
+        
+        // Initialize the application
+        async function init() {
+            console.log('🌌 Initializing Fabric of Space Z...');
+            
+            // Set up Three.js scene
+            setupScene();
+            
+            // Initialize the hybrid Voronoi system
+            hybridSystem = new HybridVoronoiSystem();
+            await hybridSystem.init();
+            
+            // Set up UI event listeners
+            setupUI();
+            
+            // Start the render loop
+            animate();
+            
+            console.log('✅ Fabric of Space Z initialized successfully!');
+        }
+        
+        function setupScene() {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x111111);
+            
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(2, 2, 2);
+            
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('sceneContainer').appendChild(renderer.domElement);
+            
+            // Make scene and renderer globally accessible
+            window.scene = scene;
+            window.renderer = renderer;
+            
+            // Create controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+            
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+        }
+        
+        function setupUI() {
+            // Panel toggle
+            const toggleBtn = document.getElementById('togglePanel');
+            const panel = document.getElementById('controlsPanel');
+            
+            toggleBtn.addEventListener('click', () => {
+                panel.classList.toggle('hidden');
+                toggleBtn.textContent = panel.classList.contains('hidden') ? 'Show Panel' : 'Hide Panel';
+            });
+            
+            // Control event listeners
+            document.getElementById('numPoints').addEventListener('input', (e) => {
+                document.getElementById('numPointsValue').textContent = e.target.value;
+            });
+            
+            document.getElementById('acuteThreshold').addEventListener('input', (e) => {
+                document.getElementById('acuteThresholdValue').textContent = e.target.value;
+            });
+            
+            document.getElementById('growthRate').addEventListener('input', (e) => {
+                document.getElementById('growthRateValue').textContent = e.target.value;
+            });
+            
+            document.getElementById('forceStrength').addEventListener('input', (e) => {
+                document.getElementById('forceStrengthValue').textContent = e.target.value;
+            });
+            
+            document.getElementById('transparency').addEventListener('input', (e) => {
+                document.getElementById('transparencyValue').textContent = e.target.value;
+                if (hybridSystem) {
+                    hybridSystem.setTransparency(parseFloat(e.target.value));
+                }
+            });
+            
+            // Button event listeners
+            document.getElementById('regenerateBtn').addEventListener('click', () => {
+                regenerateVoronoi();
+            });
+            
+            document.getElementById('startPhysicsBtn').addEventListener('click', () => {
+                startPhysics();
+            });
+            
+            document.getElementById('stopPhysicsBtn').addEventListener('click', () => {
+                stopPhysics();
+            });
+            
+            // Checkbox event listeners
+            document.getElementById('enablePhysics').addEventListener('change', (e) => {
+                if (hybridSystem) {
+                    hybridSystem.setPhysicsEnabled(e.target.checked);
+                }
+            });
+            
+            document.getElementById('showEdges').addEventListener('change', (e) => {
+                if (hybridSystem) {
+                    hybridSystem.setEdgesVisible(e.target.checked);
+                }
+            });
+            
+            document.getElementById('showPoints').addEventListener('change', (e) => {
+                if (hybridSystem) {
+                    hybridSystem.setPointsVisible(e.target.checked);
+                }
+            });
+            
+            document.getElementById('colorByAcuteness').addEventListener('change', (e) => {
+                if (hybridSystem) {
+                    hybridSystem.setColorByAcuteness(e.target.checked);
+                }
+            });
+            
+            document.getElementById('periodicBoundaries').addEventListener('change', (e) => {
+                if (hybridSystem) {
+                    hybridSystem.setPeriodicBoundaries(e.target.checked);
+                }
+                
+                // Update UI
+                document.getElementById('boundariesValue').textContent = 
+                    e.target.checked ? 'Periodic' : 'Non-Periodic';
+            });
+            
+            document.getElementById('pointSize').addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                document.getElementById('pointSizeValue').textContent = value;
+                if (hybridSystem) {
+                    hybridSystem.setPointSize(value);
+                }
+            });
+        }
+        
+        function regenerateVoronoi() {
+            if (!hybridSystem) return;
+            
+            const numPoints = parseInt(document.getElementById('numPoints').value);
+            const resolution = parseInt(document.getElementById('volumeResolution').value);
+            
+            hybridSystem.regenerate(numPoints, resolution);
+        }
+        
+        function startPhysics() {
+            if (!hybridSystem) return;
+            
+            const threshold = parseFloat(document.getElementById('acuteThreshold').value);
+            const growthRate = parseFloat(document.getElementById('growthRate').value);
+            const forceStrength = parseFloat(document.getElementById('forceStrength').value);
+            const mode = document.getElementById('growthMode').value;
+            
+            hybridSystem.startPhysics({
+                threshold,
+                growthRate,
+                forceStrength,
+                mode
+            });
+            
+            document.getElementById('startPhysicsBtn').disabled = true;
+            document.getElementById('stopPhysicsBtn').disabled = false;
+        }
+        
+        function stopPhysics() {
+            if (!hybridSystem) return;
+            
+            hybridSystem.stopPhysics();
+            
+            document.getElementById('startPhysicsBtn').disabled = false;
+            document.getElementById('stopPhysicsBtn').disabled = true;
+        }
+        
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+            
+            const deltaTime = clock.getDelta();
+            const currentTime = performance.now();
+            
+            // Update controls
+            controls.update();
+            
+            // Update hybrid system
+            if (hybridSystem) {
+                const systemStats = hybridSystem.update(deltaTime);
+                Object.assign(stats, systemStats);
+            }
+            
+            // Render scene
+            renderer.render(scene, camera);
+            
+            // Update performance stats
+            updatePerformanceStats(currentTime);
+        }
+        
+        function updatePerformanceStats(currentTime) {
+            frameCount++;
+            const elapsed = currentTime - lastTime;
+            
+            if (elapsed >= 1000) { // Update every second
+                stats.fps = Math.round((frameCount * 1000) / elapsed);
+                stats.frameTime = Math.round(elapsed / frameCount * 100) / 100;
+                
+                frameCount = 0;
+                lastTime = currentTime;
+                
+                // Update UI
+                document.getElementById('fpsValue').textContent = stats.fps;
+                document.getElementById('frameTimeValue').textContent = stats.frameTime + 'ms';
+                document.getElementById('jfaTimeValue').textContent = stats.jfaTime + 'ms';
+                document.getElementById('analysisTimeValue').textContent = stats.analysisTime + 'ms';
+                document.getElementById('physicsTimeValue').textContent = stats.physicsTime + 'ms';
+                document.getElementById('growingCellsValue').textContent = stats.growingCells;
+                document.getElementById('shrinkingCellsValue').textContent = stats.shrinkingCells;
+            }
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        // Initialize the application
+        init().catch(console.error);
+    </script>
+</body>
+</html> 
