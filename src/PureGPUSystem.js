@@ -119,6 +119,11 @@ export class PureGPUSystem {
         const acuteCountData = new Uint32Array(numPoints);
         this.acuteCountBuffer = new StorageBuffer(new UInt32Attribute(acuteCountData, 1));
         
+        // Create atomic centroid buffer for accumulation (flat array of scalars)
+        // Each cell gets 4 slots: x, y, z, count - all as separate atomic u32s
+        const atomicCentroidData = new Uint32Array(numPoints * 4);
+        this.atomicCentroidBuffer = new StorageBuffer(new UInt32Attribute(atomicCentroidData, 1));
+        
         // Statistics buffer for GPU-computed stats
         const statsData = new Uint32Array(4); // growing, shrinking, total, padding
         this.statsBuffer = new StorageBuffer(new UInt32Attribute(statsData, 4));
@@ -158,17 +163,10 @@ export class PureGPUSystem {
                 padding: f32
             }
             
-            struct CentroidData {
-                positionSumX: atomic<u32>,
-                positionSumY: atomic<u32>,
-                positionSumZ: atomic<u32>,
-                voxelCount: atomic<u32>
-            }
-            
             @group(0) @binding(0) var jfaTexture: texture_3d<f32>;
             @group(0) @binding(1) var jfaSampler: sampler;
             @group(0) @binding(2) var<storage, read> seeds: array<Seed>;
-            @group(0) @binding(3) var<storage, read_write> centroids: array<CentroidData>;
+            @group(0) @binding(3) var<storage, read_write> centroids: array<atomic<u32>>; // Flat array of atomics
             @group(0) @binding(4) var<storage, read_write> acuteCounts: array<atomic<u32>>;
             
             @compute @workgroup_size(4, 4, 4)
@@ -187,12 +185,13 @@ export class PureGPUSystem {
                     return;
                 }
                 
-                // Accumulate centroid data using fixed-point arithmetic
-                // We use the raw voxel coordinates directly (already integers)
-                atomicAdd(&centroids[cellId].positionSumX, id.x);
-                atomicAdd(&centroids[cellId].positionSumY, id.y);
-                atomicAdd(&centroids[cellId].positionSumZ, id.z);
-                atomicAdd(&centroids[cellId].voxelCount, 1u);
+                // Accumulate centroid data using flat atomic buffer
+                // Each cell has 4 slots: x, y, z, count
+                let bufferBaseIndex = cellId * 4u;
+                atomicAdd(&centroids[bufferBaseIndex + 0u], id.x); // Add to X slot
+                atomicAdd(&centroids[bufferBaseIndex + 1u], id.y); // Add to Y slot
+                atomicAdd(&centroids[bufferBaseIndex + 2u], id.z); // Add to Z slot
+                atomicAdd(&centroids[bufferBaseIndex + 3u], 1u);   // Add to count slot
                 
                 // Check for junctions and calculate angles
                 // Sample 2x2x2 neighborhood
@@ -276,19 +275,12 @@ export class PureGPUSystem {
         
         // Create centroid finalization compute shader
         const finalizationShaderCode = `
-            struct CentroidDataAtomic {
-                positionSumX: atomic<u32>,
-                positionSumY: atomic<u32>,
-                positionSumZ: atomic<u32>,
-                voxelCount: atomic<u32>
-            }
-            
             struct CentroidDataFloat {
                 positionSum: vec3f,
                 voxelCount: f32
             }
             
-            @group(0) @binding(0) var<storage, read> atomicCentroids: array<CentroidDataAtomic>;
+            @group(0) @binding(0) var<storage, read> atomicCentroids: array<u32>; // Flat array (non-atomic for reading)
             @group(0) @binding(1) var<storage, read_write> floatCentroids: array<CentroidDataFloat>;
             @group(0) @binding(2) var<uniform> volumeSize: u32;
             
@@ -299,11 +291,12 @@ export class PureGPUSystem {
                     return;
                 }
                 
-                // Read atomic values
-                let sumX = f32(atomicLoad(&atomicCentroids[cellId].positionSumX));
-                let sumY = f32(atomicLoad(&atomicCentroids[cellId].positionSumY));
-                let sumZ = f32(atomicLoad(&atomicCentroids[cellId].positionSumZ));
-                let voxelCount = f32(atomicLoad(&atomicCentroids[cellId].voxelCount));
+                // Read from flat buffer - each cell has 4 consecutive values
+                let bufferBaseIndex = cellId * 4u;
+                let sumX = f32(atomicCentroids[bufferBaseIndex + 0u]);
+                let sumY = f32(atomicCentroids[bufferBaseIndex + 1u]);
+                let sumZ = f32(atomicCentroids[bufferBaseIndex + 2u]);
+                let voxelCount = f32(atomicCentroids[bufferBaseIndex + 3u]);
                 
                 // Convert to world space centroid
                 if (voxelCount > 0.0) {
@@ -564,7 +557,7 @@ export class PureGPUSystem {
         const analysisStart = performance.now();
         
         // Clear buffers
-        commandEncoder.clearBuffer(this.centroidBuffer, 0);
+        commandEncoder.clearBuffer(this.atomicCentroidBuffer, 0);
         commandEncoder.clearBuffer(this.acuteCountBuffer, 0);
         
         // Run analysis compute pass
@@ -577,7 +570,7 @@ export class PureGPUSystem {
                 { binding: 0, resource: this.jfaCompute.getOutputTexture().createView() },
                 { binding: 1, resource: this.jfaSampler },
                 { binding: 2, resource: { buffer: this.seedBuffer.buffer } },
-                { binding: 3, resource: { buffer: this.centroidBuffer.buffer } },
+                { binding: 3, resource: { buffer: this.atomicCentroidBuffer.buffer } },
                 { binding: 4, resource: { buffer: this.acuteCountBuffer.buffer } }
             ]
         });
@@ -598,7 +591,7 @@ export class PureGPUSystem {
         const finalizationBindGroup = this.device.createBindGroup({
             layout: this.centroidFinalizationPipeline.getBindGroupLayout(0),
             entries: [
-                { binding: 0, resource: { buffer: this.centroidBuffer.buffer } }, // Atomic centroids
+                { binding: 0, resource: { buffer: this.atomicCentroidBuffer.buffer } }, // Atomic centroids
                 { binding: 1, resource: { buffer: this.floatCentroidBuffer.buffer } }, // Float centroids
                 { binding: 2, resource: { buffer: this.volumeSizeBuffer } } // Volume size
             ]
@@ -717,6 +710,7 @@ export class PureGPUSystem {
         this.physicsSettingsBuffer?.destroy();
         this.volumeSizeBuffer?.destroy();
         this.floatCentroidBuffer?.destroy();
+        this.atomicCentroidBuffer?.destroy();
         
         // Clean up compute pipelines
         this.jfaCompute?.destroy();
