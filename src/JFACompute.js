@@ -19,8 +19,6 @@ export class JFACompute {
         
         // JFA parameters
         this.volumeSize = 64;
-        this.atlasSize = 0;
-        this.slicesPerRow = 0;
         
         // Storage resources
         this.seedBuffer = null;
@@ -70,10 +68,7 @@ export class JFACompute {
      * Update volume parameters based on current settings
      */
     updateVolumeParameters() {
-        this.slicesPerRow = Math.ceil(Math.sqrt(this.volumeSize));
-        this.atlasSize = this.volumeSize * this.slicesPerRow;
-        
-        console.log(`📐 JFA volume parameters: ${this.volumeSize}³ → ${this.atlasSize}² atlas`);
+        console.log(`📐 JFA volume parameters: ${this.volumeSize}³ volume`);
     }
     
     /**
@@ -101,11 +96,9 @@ export class JFACompute {
             // Uniforms
             struct Uniforms {
                 volumeSize: u32,
-                atlasSize: u32,
-                slicesPerRow: u32,
                 stepSize: u32,
                 numPoints: u32,
-                padding: array<u32, 3>
+                padding: u32
             };
             
             // Seed data structure
@@ -118,33 +111,8 @@ export class JFACompute {
             
             @group(0) @binding(0) var<uniform> uniforms: Uniforms;
             @group(0) @binding(1) var<storage, read> seedData: array<SeedData>;
-            @group(0) @binding(2) var outputTexture: texture_storage_2d<rgba32float, write>;
-            @group(0) @binding(3) var inputTexture: texture_2d<f32>;
-            
-            // Convert 3D coordinates to 2D atlas coordinates
-            fn coords3DTo2D(coords3D: vec3<u32>) -> vec2<u32> {
-                let sliceIndex = coords3D.z;
-                let sliceX = sliceIndex % uniforms.slicesPerRow;
-                let sliceY = sliceIndex / uniforms.slicesPerRow;
-                
-                return vec2<u32>(
-                    sliceX * uniforms.volumeSize + coords3D.x,
-                    sliceY * uniforms.volumeSize + coords3D.y
-                );
-            }
-            
-            // Convert 2D atlas coordinates to 3D coordinates
-            fn coords2DTo3D(coords2D: vec2<u32>) -> vec3<u32> {
-                let sliceX = coords2D.x / uniforms.volumeSize;
-                let sliceY = coords2D.y / uniforms.volumeSize;
-                let sliceIndex = sliceY * uniforms.slicesPerRow + sliceX;
-                
-                return vec3<u32>(
-                    coords2D.x % uniforms.volumeSize,
-                    coords2D.y % uniforms.volumeSize,
-                    sliceIndex
-                );
-            }
+            @group(0) @binding(2) var outputTexture: texture_storage_3d<r32uint, write>;
+            @group(0) @binding(3) var inputTexture: texture_3d<u32>;
             
             // Distance calculation with weights
             fn calculateDistance(pos1: vec3<f32>, pos2: vec3<f32>, weight: f32) -> f32 {
@@ -154,60 +122,47 @@ export class JFACompute {
             }
             
             // JFA step function
-            @compute @workgroup_size(8, 8, 1)
+            @compute @workgroup_size(4, 4, 4)
             fn jfaStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
-                let coords2D = global_id.xy;
+                let coords3D = global_id.xyz;
                 
                 // Check bounds
-                if (coords2D.x >= uniforms.atlasSize || coords2D.y >= uniforms.atlasSize) {
-                    return;
-                }
-                
-                // Convert to 3D coordinates
-                let coords3D = coords2DTo3D(coords2D);
-                if (coords3D.z >= uniforms.volumeSize) {
+                if (coords3D.x >= uniforms.volumeSize || 
+                    coords3D.y >= uniforms.volumeSize || 
+                    coords3D.z >= uniforms.volumeSize) {
                     return;
                 }
                 
                 // Current position in world space
                 let currentPos = vec3<f32>(coords3D) / f32(uniforms.volumeSize - 1u);
                 
-                // Initialize best values
+                // Initialize with invalid seed ID
                 var bestDistance = 999999.0;
-                var bestSeedId = 0u;
-                var bestSeedPos = vec3<f32>(0.0);
+                var bestSeedId = 4294967295u; // Max uint = no seed
                 
-                // Sample current pixel
-                let currentSample = textureLoad(inputTexture, coords2D, 0);
-                if (currentSample.w > 0.0) {
-                    bestDistance = currentSample.w;
-                    bestSeedId = u32(currentSample.z);
-                    bestSeedPos = currentSample.xyz;
-                }
-                
-                // JFA sampling pattern
-                let step = i32(uniforms.stepSize);
-                for (var dz = -step; dz <= step; dz += step) {
-                    for (var dy = -step; dy <= step; dy += step) {
-                        for (var dx = -step; dx <= step; dx += step) {
-                            let sampleCoords3D = vec3<i32>(coords3D) + vec3<i32>(dx, dy, dz);
-                            
-                            // Check bounds
-                            if (sampleCoords3D.x < 0 || sampleCoords3D.x >= i32(uniforms.volumeSize) ||
-                                sampleCoords3D.y < 0 || sampleCoords3D.y >= i32(uniforms.volumeSize) ||
-                                sampleCoords3D.z < 0 || sampleCoords3D.z >= i32(uniforms.volumeSize)) {
+                // JFA sampling pattern (26 neighbors in 3D)
+                for (var dz = -1; dz <= 1; dz++) {
+                    for (var dy = -1; dy <= 1; dy++) {
+                        for (var dx = -1; dx <= 1; dx++) {
+                            // Skip center voxel
+                            if (dx == 0 && dy == 0 && dz == 0) {
                                 continue;
                             }
                             
-                            // Convert to 2D atlas coordinates
-                            let sampleCoords2D = coords3DTo2D(vec3<u32>(sampleCoords3D));
+                            // Calculate sample position with step size
+                            let offset = vec3<i32>(dx, dy, dz) * i32(uniforms.stepSize);
+                            let sampleCoords3D = vec3<i32>(coords3D) + offset;
                             
-                            // Sample the texture
-                            let sample = textureLoad(inputTexture, sampleCoords2D, 0);
-                            
-                            if (sample.w > 0.0) {
-                                let seedId = u32(sample.z);
-                                if (seedId < uniforms.numPoints) {
+                            // Check bounds
+                            if (sampleCoords3D.x >= 0 && sampleCoords3D.x < i32(uniforms.volumeSize) &&
+                                sampleCoords3D.y >= 0 && sampleCoords3D.y < i32(uniforms.volumeSize) &&
+                                sampleCoords3D.z >= 0 && sampleCoords3D.z < i32(uniforms.volumeSize)) {
+                                
+                                // Sample the texture directly in 3D
+                                let sample = textureLoad(inputTexture, vec3<u32>(sampleCoords3D), 0);
+                                let seedId = sample.r; // Get the seed ID from the red channel
+                                
+                                if (seedId < uniforms.numPoints) { // Valid seed ID
                                     let seedPos = seedData[seedId].position;
                                     let weight = seedData[seedId].weight;
                                     
@@ -216,7 +171,6 @@ export class JFACompute {
                                     if (distance < bestDistance) {
                                         bestDistance = distance;
                                         bestSeedId = seedId;
-                                        bestSeedPos = seedPos;
                                     }
                                 }
                             }
@@ -224,32 +178,27 @@ export class JFACompute {
                     }
                 }
                 
-                // Write result
-                let result = vec4<f32>(bestSeedPos, bestDistance);
-                textureStore(outputTexture, coords2D, result);
+                // Write result - just the cell ID as a single uint
+                textureStore(outputTexture, coords3D, vec4u(bestSeedId, 0u, 0u, 0u));
             }
             
             // Initialize seeds
-            @compute @workgroup_size(8, 8, 1)
+            @compute @workgroup_size(4, 4, 4)
             fn initSeeds(@builtin(global_invocation_id) global_id: vec3<u32>) {
-                let coords2D = global_id.xy;
+                let coords3D = global_id.xyz;
                 
                 // Check bounds
-                if (coords2D.x >= uniforms.atlasSize || coords2D.y >= uniforms.atlasSize) {
-                    return;
-                }
-                
-                // Convert to 3D coordinates
-                let coords3D = coords2DTo3D(coords2D);
-                if (coords3D.z >= uniforms.volumeSize) {
+                if (coords3D.x >= uniforms.volumeSize || 
+                    coords3D.y >= uniforms.volumeSize || 
+                    coords3D.z >= uniforms.volumeSize) {
                     return;
                 }
                 
                 // Current position in world space
                 let currentPos = vec3<f32>(coords3D) / f32(uniforms.volumeSize - 1u);
                 
-                // Initialize with no seed
-                var result = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+                // Initialize with invalid seed ID (max uint)
+                var seedId = 4294967295u; // Max uint32 = no seed
                 
                 // Check if this voxel contains a seed
                 for (var i = 0u; i < uniforms.numPoints; i++) {
@@ -261,12 +210,12 @@ export class JFACompute {
                     let voxelSize = 1.0 / f32(uniforms.volumeSize);
                     
                     if (distance < voxelSize) {
-                        result = vec4<f32>(seedPos, distance);
+                        seedId = i;
                         break;
                     }
                 }
                 
-                textureStore(outputTexture, coords2D, result);
+                textureStore(outputTexture, coords3D, vec4u(seedId, 0u, 0u, 0u));
             }
         `;
         
@@ -279,14 +228,15 @@ export class JFACompute {
     createStorageResources() {
         // Create uniform buffer
         this.uniformBuffer = this.device.createBuffer({
-            size: 32, // 8 u32 values
+            size: 16, // 4 u32 values: volumeSize, stepSize, numPoints, padding
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
         
-        // Create output texture (storage texture)
+        // Create output texture (storage texture) - Using r32uint for pure integer cell IDs
+        // Creating a 3D texture instead of 2D atlas for direct use in analysis shader
         this.outputTexture = this.device.createTexture({
-            size: [this.atlasSize, this.atlasSize, 1],
-            format: 'rgba32float',
+            size: [this.volumeSize, this.volumeSize, this.volumeSize],
+            format: 'r32uint',  // Changed to store single integer cell ID
             usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
         });
         
@@ -320,14 +270,17 @@ export class JFACompute {
                     visibility: GPUShaderStage.COMPUTE,
                     storageTexture: {
                         access: 'write-only',
-                        format: 'rgba32float',
-                        viewDimension: '2d',
+                        format: 'r32uint',
+                        viewDimension: '3d',
                     },
                 },
                 {
                     binding: 3,
                     visibility: GPUShaderStage.COMPUTE,
-                    texture: { sampleType: 'float' },
+                    texture: { 
+                        sampleType: 'uint',
+                        viewDimension: '3d'
+                    },
                 },
             ],
         });
@@ -453,11 +406,9 @@ export class JFACompute {
         // Update uniform buffer
         const uniformArray = new Uint32Array([
             this.volumeSize,
-            this.atlasSize,
-            this.slicesPerRow,
             1, // stepSize (will be updated per pass)
             numPoints,
-            0, 0, 0 // padding
+            0  // padding
         ]);
         
         this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformArray);
@@ -497,29 +448,22 @@ export class JFACompute {
         initPass.setPipeline(this.initPipeline);
         initPass.setBindGroup(0, bindGroup);
         
-        const workgroupsX = Math.ceil(this.atlasSize / 8);
-        const workgroupsY = Math.ceil(this.atlasSize / 8);
-        initPass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
+        const workgroupsPerDim = Math.ceil(this.volumeSize / 4); // 4x4x4 workgroup size
+        initPass.dispatchWorkgroups(workgroupsPerDim, workgroupsPerDim, workgroupsPerDim);
         initPass.end();
         
         // JFA passes with decreasing step sizes
         const maxStepSize = Math.floor(this.volumeSize / 2);
         for (let stepSize = maxStepSize; stepSize >= 1; stepSize = Math.floor(stepSize / 2)) {
-            // Update step size in uniform buffer
-            const uniformArray = new Uint32Array([
-                this.volumeSize,
-                this.atlasSize,
-                this.slicesPerRow,
-                stepSize,
-                0, 0, 0, 0
-            ]);
-            this.device.queue.writeBuffer(this.uniformBuffer, 12, uniformArray.slice(3, 4));
+            // Update step size in uniform buffer (at offset 4 bytes = 1 u32)
+            const stepSizeArray = new Uint32Array([stepSize]);
+            this.device.queue.writeBuffer(this.uniformBuffer, 4, stepSizeArray);
             
             // Run JFA pass
             const jfaPass = commandEncoder.beginComputePass();
             jfaPass.setPipeline(this.jfaPipeline);
             jfaPass.setBindGroup(0, bindGroup);
-            jfaPass.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
+            jfaPass.dispatchWorkgroups(workgroupsPerDim, workgroupsPerDim, workgroupsPerDim);
             jfaPass.end();
         }
         

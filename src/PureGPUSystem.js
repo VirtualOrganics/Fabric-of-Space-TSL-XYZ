@@ -207,23 +207,22 @@ export class PureGPUSystem {
                 padding: f32
             }
             
-            @group(0) @binding(0) var jfaTexture: texture_3d<f32>;
-            @group(0) @binding(1) var jfaSampler: sampler;
-            @group(0) @binding(2) var<storage, read> seeds: array<Seed>;
-            @group(0) @binding(3) var<storage, read_write> centroids: array<atomic<u32>>; // Flat array of atomics
-            @group(0) @binding(4) var<storage, read_write> acuteCounts: array<atomic<u32>>;
+            @group(0) @binding(0) var jfaTexture: texture_storage_3d<r32uint, read>;
+            @group(0) @binding(1) var<storage, read> seeds: array<Seed>;
+            @group(0) @binding(2) var<storage, read_write> centroids: array<atomic<u32>>; // Flat array of atomics
+            @group(0) @binding(3) var<storage, read_write> acuteCounts: array<atomic<u32>>;
             
             @compute @workgroup_size(4, 4, 4)
             fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 let dims = textureDimensions(jfaTexture);
+                
+                // Check bounds
                 if (id.x >= dims.x || id.y >= dims.y || id.z >= dims.z) {
                     return;
                 }
                 
-                // Sample JFA texture to get cell ID
-                let texCoord = vec3f(id) / vec3f(dims);
-                let jfaValue = textureSampleLevel(jfaTexture, jfaSampler, texCoord, 0.0);
-                let cellId = u32(jfaValue.w * f32(arrayLength(&seeds)));
+                // Load the cell ID directly from 3D texture
+                let cellId = textureLoad(jfaTexture, id).r;
                 
                 if (cellId >= arrayLength(&seeds)) {
                     return;
@@ -247,21 +246,21 @@ export class PureGPUSystem {
                         for (var dx = 0u; dx <= 1u; dx++) {
                             let samplePos = id + vec3u(dx, dy, dz);
                             if (samplePos.x < dims.x && samplePos.y < dims.y && samplePos.z < dims.z) {
-                                let sampleCoord = vec3f(samplePos) / vec3f(dims);
-                                let sampleValue = textureSampleLevel(jfaTexture, jfaSampler, sampleCoord, 0.0);
-                                let sampleCell = u32(sampleValue.w * f32(arrayLength(&seeds)));
+                                let sampleCell = textureLoad(jfaTexture, samplePos).r;
                                 
-                                // Check if this cell is unique
-                                var isUnique = true;
-                                for (var i = 0u; i < numUnique; i++) {
-                                    if (uniqueCells[i] == sampleCell) {
-                                        isUnique = false;
-                                        break;
+                                if (sampleCell < arrayLength(&seeds)) {
+                                    // Check if this cell is unique
+                                    var isUnique = true;
+                                    for (var i = 0u; i < numUnique; i++) {
+                                        if (uniqueCells[i] == sampleCell) {
+                                            isUnique = false;
+                                            break;
+                                        }
                                     }
-                                }
-                                if (isUnique && numUnique < 8u) {
-                                    uniqueCells[numUnique] = sampleCell;
-                                    numUnique++;
+                                    if (isUnique && numUnique < 8u) {
+                                        uniqueCells[numUnique] = sampleCell;
+                                        numUnique++;
+                                    }
                                 }
                             }
                         }
@@ -311,11 +310,7 @@ export class PureGPUSystem {
             }
         });
         
-        // Create sampler for JFA texture
-        this.jfaSampler = device.createSampler({
-            magFilter: 'linear',
-            minFilter: 'linear'
-        });
+
         
         // Create centroid finalization compute shader
         const finalizationShaderCode = `
@@ -612,10 +607,9 @@ export class PureGPUSystem {
             layout: this.analysisComputePipeline.getBindGroupLayout(0),
             entries: [
                 { binding: 0, resource: this.jfaCompute.getOutputTexture().createView() },
-                { binding: 1, resource: this.jfaSampler },
-                { binding: 2, resource: { buffer: this.seedBuffer.buffer } },
-                { binding: 3, resource: { buffer: this.atomicCentroidBuffer.buffer } },
-                { binding: 4, resource: { buffer: this.acuteCountBuffer.buffer } }
+                { binding: 1, resource: { buffer: this.seedBuffer.buffer } },
+                { binding: 2, resource: { buffer: this.atomicCentroidBuffer.buffer } },
+                { binding: 3, resource: { buffer: this.acuteCountBuffer.buffer } }
             ]
         });
         
