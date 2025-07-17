@@ -86,6 +86,11 @@ export class VoronoiAnalyzer {
             
             // Get cell ID from alpha channel (normalized 0-1, convert to seed index)
             const cellIDNormalized = buffer[index + 3];
+            
+            // Skip voxels with no seed assigned (cellIDNormalized = 0)
+            if (cellIDNormalized < 0.001) continue;
+            
+            // Convert normalized ID back to seed index: (i + 1) / numPoints -> i
             const cellID = Math.round(cellIDNormalized * this.seedData.length) - 1;
             
             if (cellID >= 0 && cellID < this.seedData.length) {
@@ -192,16 +197,21 @@ export class VoronoiAnalyzer {
         const { width, height, depth } = this.dimensions;
         const vertices = [];
         
-        // Helper function to get cell ID from 3D coordinates
-        const getCellID = (x, y, z) => {
-            if (x < 0 || x >= width || y < 0 || y >= height || z < 0 || z >= depth) {
-                return -1;
-            }
-            
-            const index = (z * width * height + y * width + x) * 4;
-            const cellIDNormalized = buffer[index + 3];
-            return Math.round(cellIDNormalized * this.seedData.length) - 1;
-        };
+                 // Helper function to get cell ID from 3D coordinates
+         const getCellID = (x, y, z) => {
+             if (x < 0 || x >= width || y < 0 || y >= height || z < 0 || z >= depth) {
+                 return -1;
+             }
+             
+             const index = (z * width * height + y * width + x) * 4;
+             const cellIDNormalized = buffer[index + 3];
+             
+             // Return -1 for voxels with no seed assigned
+             if (cellIDNormalized < 0.001) return -1;
+             
+             // Convert normalized ID back to seed index
+             return Math.round(cellIDNormalized * this.seedData.length) - 1;
+         };
         
         // Scan for junctions by checking 2x2x2 cubes in 3D space
         for (let z = 0; z < depth - 1; z++) {
