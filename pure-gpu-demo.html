@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pure GPU Voronoi Physics - WebGPU Demo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #stats {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: monospace;
+            min-width: 300px;
+        }
+        
+        .stat-row {
+            margin: 5px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .stat-label {
+            color: #888;
+        }
+        
+        .stat-value {
+            color: #0f0;
+            font-weight: bold;
+        }
+        
+        .warning {
+            color: #f80;
+            margin-top: 10px;
+            font-size: 12px;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            min-width: 250px;
+        }
+        
+        .control-group {
+            margin: 10px 0;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #888;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #fff;
+            border-radius: 3px;
+        }
+        
+        button {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            background: #0066cc;
+            border: none;
+            color: white;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background: #0088ff;
+        }
+        
+        button:disabled {
+            background: #444;
+            cursor: not-allowed;
+        }
+        
+        #error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 0, 0, 0.1);
+            border: 2px solid #f00;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 500px;
+            display: none;
+        }
+        
+        .error-title {
+            color: #f00;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        
+        .badge-gpu {
+            background: #0f0;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    
+    <div id="stats">
+        <h3>Pure GPU Pipeline <span class="badge badge-gpu">WebGPU</span></h3>
+        <div class="stat-row">
+            <span class="stat-label">FPS:</span>
+            <span class="stat-value" id="fps">0</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Total Frame Time:</span>
+            <span class="stat-value" id="totalTime">0ms</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">JFA Compute:</span>
+            <span class="stat-value" id="jfaTime">0ms</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Analysis Compute:</span>
+            <span class="stat-value" id="analysisTime">0ms</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Physics Compute:</span>
+            <span class="stat-value" id="physicsTime">0ms</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Growing Cells:</span>
+            <span class="stat-value" id="growingCells">0</span>
+        </div>
+        <div class="stat-row">
+            <span class="stat-label">Shrinking Cells:</span>
+            <span class="stat-value" id="shrinkingCells">0</span>
+        </div>
+        <div class="warning">
+            ⚡ All computations run on GPU with zero CPU transfers
+        </div>
+    </div>
+    
+    <div id="controls">
+        <h3>Controls</h3>
+        
+        <div class="control-group">
+            <button id="startStop">Start Simulation</button>
+        </div>
+        
+        <div class="control-group">
+            <label>Volume Resolution:</label>
+            <select id="resolution">
+                <option value="64">64³ (262K voxels)</option>
+                <option value="128">128³ (2M voxels)</option>
+                <option value="256" selected>256³ (16M voxels)</option>
+                <option value="512">512³ (134M voxels) 🔥</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>Number of Seeds:</label>
+            <input type="range" id="numSeeds" min="10" max="500" value="100" step="10">
+            <span id="numSeedsValue">100</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Physics Mode:</label>
+            <select id="physicsMode">
+                <option value="balanced">Balanced</option>
+                <option value="growthOnly">Growth Only</option>
+                <option value="shrinkOnly">Shrink Only</option>
+                <option value="inverse">Inverse</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label>Angle Threshold:</label>
+            <input type="range" id="threshold" min="1" max="30" value="12" step="1">
+            <span id="thresholdValue">12</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Growth Rate:</label>
+            <input type="range" id="growthRate" min="0" max="0.5" value="0.1" step="0.01">
+            <span id="growthRateValue">0.1</span>
+        </div>
+        
+        <div class="control-group">
+            <button id="regenerate">Regenerate Seeds</button>
+        </div>
+    </div>
+    
+    <div id="error">
+        <div class="error-title">WebGPU Not Available</div>
+        <p>This demo requires WebGPU support. Please use:</p>
+        <ul>
+            <li>Chrome/Edge 113+ with WebGPU enabled</li>
+            <li>Firefox Nightly with WebGPU enabled</li>
+            <li>Safari Technology Preview</li>
+        </ul>
+    </div>
+    
+    <!-- Import maps for Three.js modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.178.0/build/three.module.js",
+            "three/webgpu": "https://unpkg.com/three@0.178.0/build/three.webgpu.js",
+            "three/tsl": "https://unpkg.com/three@0.178.0/build/three.webgpu.js",
+            "three/addons/": "https://unpkg.com/three@0.178.0/examples/jsm/"
+        }
+    }
+    </script>
+    
+    <script type="module">
+        import { PureGPUSystem } from './src/PureGPUSystem.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        
+        // Check WebGPU support
+        if (!navigator.gpu) {
+            document.getElementById('error').style.display = 'block';
+            throw new Error('WebGPU not supported');
+        }
+        
+        let system;
+        let controls;
+        let animationId;
+        let lastTime = performance.now();
+        
+        // Initialize system
+        async function init() {
+            const container = document.getElementById('container');
+            
+            // Create pure GPU system
+            system = new PureGPUSystem(container, {
+                volumeResolution: 256,
+                numPoints: 100,
+                physicsSettings: {
+                    threshold: 12,
+                    mode: 'balanced',
+                    growthRate: 0.1,
+                    shrinkRate: 0.05,
+                    momentum: 0.95,
+                    damping: 0.02,
+                    maxSpeed: 2.0
+                }
+            });
+            
+            try {
+                await system.initialize();
+                
+                // Add orbit controls
+                controls = new OrbitControls(system.camera, system.renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                
+                // Setup UI
+                setupUI();
+                
+                // Start animation loop
+                animate();
+                
+                console.log('✅ Pure GPU system initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize:', error);
+                document.getElementById('error').style.display = 'block';
+            }
+        }
+        
+        // Setup UI controls
+        function setupUI() {
+            // Start/Stop button
+            const startStopBtn = document.getElementById('startStop');
+            startStopBtn.addEventListener('click', () => {
+                if (system.simulationRunning) {
+                    system.stop();
+                    startStopBtn.textContent = 'Start Simulation';
+                } else {
+                    system.start();
+                    startStopBtn.textContent = 'Stop Simulation';
+                }
+            });
+            
+            // Resolution
+            document.getElementById('resolution').addEventListener('change', async (e) => {
+                const resolution = parseInt(e.target.value);
+                system.settings.volumeResolution = resolution;
+                // Would need to reinitialize for resolution change
+                console.log(`Resolution changed to ${resolution}³`);
+            });
+            
+            // Number of seeds
+            const numSeedsSlider = document.getElementById('numSeeds');
+            const numSeedsValue = document.getElementById('numSeedsValue');
+            numSeedsSlider.addEventListener('input', (e) => {
+                const value = parseInt(e.target.value);
+                numSeedsValue.textContent = value;
+                system.settings.numPoints = value;
+            });
+            
+            // Physics mode
+            document.getElementById('physicsMode').addEventListener('change', (e) => {
+                system.settings.physicsSettings.mode = e.target.value;
+            });
+            
+            // Threshold
+            const thresholdSlider = document.getElementById('threshold');
+            const thresholdValue = document.getElementById('thresholdValue');
+            thresholdSlider.addEventListener('input', (e) => {
+                const value = parseInt(e.target.value);
+                thresholdValue.textContent = value;
+                system.settings.physicsSettings.threshold = value;
+            });
+            
+            // Growth rate
+            const growthRateSlider = document.getElementById('growthRate');
+            const growthRateValue = document.getElementById('growthRateValue');
+            growthRateSlider.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                growthRateValue.textContent = value.toFixed(2);
+                system.settings.physicsSettings.growthRate = value;
+            });
+            
+            // Regenerate button
+            document.getElementById('regenerate').addEventListener('click', async () => {
+                console.log('Regenerating seeds...');
+                // Would need to reinitialize buffers
+            });
+        }
+        
+        // Update stats display
+        function updateStats(stats) {
+            document.getElementById('fps').textContent = stats.fps;
+            document.getElementById('totalTime').textContent = stats.totalTime + 'ms';
+            document.getElementById('jfaTime').textContent = stats.jfaTime + 'ms';
+            document.getElementById('analysisTime').textContent = stats.analysisTime + 'ms';
+            document.getElementById('physicsTime').textContent = stats.physicsTime + 'ms';
+            document.getElementById('growingCells').textContent = stats.growingCells;
+            document.getElementById('shrinkingCells').textContent = stats.shrinkingCells;
+        }
+        
+        // Animation loop
+        async function animate() {
+            animationId = requestAnimationFrame(animate);
+            
+            const currentTime = performance.now();
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+            
+            // Update controls
+            if (controls) {
+                controls.update();
+            }
+            
+            // Update system
+            if (system) {
+                await system.update(deltaTime);
+                updateStats(system.performanceStats);
+            }
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (system) {
+                const container = document.getElementById('container');
+                system.camera.aspect = container.clientWidth / container.clientHeight;
+                system.camera.updateProjectionMatrix();
+                system.renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+        });
+        
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html> 
