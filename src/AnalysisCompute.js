@@ -421,8 +421,8 @@ export class AnalysisCompute {
                     return -1;
                 }
                 
-                // Direct integer read from r32uint texture
-                let cellId = i32(textureLoad(jfaTexture, coords).r);
+                // Load the integer cell ID directly from the r32uint storage texture (base mip level 0)
+                let cellId = i32(textureLoad(jfaTexture, coords, 0).r);
                 
                 // Check if valid seed ID (4294967295u is the invalid marker)
                 if (cellId >= i32(uniforms.numSeeds) || cellId < 0) {
