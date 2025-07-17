@@ -60,8 +60,9 @@ export class AnalysisCompute {
                 {
                     binding: 0,
                     visibility: GPUShaderStage.COMPUTE,
-                    texture: {
-                        sampleType: 'float',
+                    storageTexture: {
+                        access: 'read-only',
+                        format: 'r32uint',
                         viewDimension: '3d'
                     }
                 },
@@ -406,7 +407,7 @@ export class AnalysisCompute {
                  voxelCount: atomic<u32>
              }
             
-            @group(0) @binding(0) var jfaTexture: texture_3d<f32>;
+            @group(0) @binding(0) var jfaTexture: texture_storage_3d<r32uint, read>;
             @group(0) @binding(1) var<storage, read_write> seedBuffer: array<SeedData>;
             @group(0) @binding(2) var<storage, read_write> centroidData: array<CentroidData>;
             @group(0) @binding(3) var<storage, read_write> acuteCountBuffer: array<atomic<u32>>;
@@ -420,16 +421,15 @@ export class AnalysisCompute {
                     return -1;
                 }
                 
-                let texelValue = textureLoad(jfaTexture, coords, 0);
-                let cellIDNormalized = texelValue.a;
+                // Direct integer read from r32uint texture
+                let cellId = i32(textureLoad(jfaTexture, coords).r);
                 
-                // Skip voxels with no seed assigned
-                if (cellIDNormalized < 0.001) {
+                // Check if valid seed ID (4294967295u is the invalid marker)
+                if (cellId >= i32(uniforms.numSeeds) || cellId < 0) {
                     return -1;
                 }
                 
-                // Convert normalized ID back to seed index
-                return i32(round(cellIDNormalized * f32(uniforms.numSeeds))) - 1;
+                return cellId;
             }
             
             // Convert 3D coordinates to world space [-1, 1]
