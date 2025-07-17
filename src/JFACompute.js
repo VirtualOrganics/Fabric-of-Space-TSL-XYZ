@@ -360,26 +360,53 @@ export class JFACompute {
     }
     
     /**
-     * Main compute function - runs JFA with current seed data
+     * Run the JFA compute pass
      */
     async compute(seedData, numPoints) {
+        console.log(`🖥️ Running JFA compute pass with ${numPoints} seeds...`);
+        
         const startTime = performance.now();
         
-        try {
-            // Update seed buffer
-            await this.updateSeedBuffer(seedData, numPoints);
-            
-            // Run JFA passes
-            await this.runJFAPasses();
-            
-            this.lastComputeTime = Math.round(performance.now() - startTime);
-            
-            console.log(`✅ JFA compute completed in ${this.lastComputeTime}ms`);
-            
-        } catch (error) {
-            console.error('❌ Error in JFA compute:', error);
-            this.lastComputeTime = 0;
-        }
+        // Update seed buffer
+        this.updateSeedBuffer(seedData, numPoints);
+        
+        // Run JFA passes
+        await this.runJFAPasses();
+        
+        this.lastComputeTime = performance.now() - startTime;
+        console.log(`✅ JFA compute completed in ${this.lastComputeTime.toFixed(2)}ms`);
+    }
+    
+    /**
+     * Run the JFA compute pass with an existing GPU buffer
+     * @param {GPUBuffer} seedBuffer - Pre-existing GPU buffer with seed data
+     * @param {number} numPoints - Number of seeds
+     */
+    async computeWithBuffer(seedBuffer, numPoints) {
+        console.log(`🖥️ Running JFA compute pass with GPU buffer (${numPoints} seeds)...`);
+        
+        const startTime = performance.now();
+        
+        // Use the provided buffer directly
+        this.seedBuffer = seedBuffer;
+        
+        // Update uniform buffer with current parameters
+        const uniformArray = new Uint32Array([
+            this.volumeSize,
+            this.atlasSize,
+            this.slicesPerRow,
+            1, // stepSize (will be updated per pass)
+            numPoints,
+            0, 0, 0 // padding
+        ]);
+        
+        this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformArray);
+        
+        // Run JFA passes
+        await this.runJFAPasses();
+        
+        this.lastComputeTime = performance.now() - startTime;
+        console.log(`✅ JFA compute (GPU buffer) completed in ${this.lastComputeTime.toFixed(2)}ms`);
     }
     
     /**

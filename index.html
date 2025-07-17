@@ -276,9 +276,10 @@
                 <label>Resolution:</label>
                 <select id="volumeResolution" style="background: #333; color: #fff; border: 1px solid #666; padding: 5px; border-radius: 4px;">
                     <option value="32">32³</option>
-                    <option value="64" selected>64³</option>
-                    <option value="128">128³</option>
-                    <option value="256">256³</option>
+                    <option value="64">64³</option>
+                    <option value="128" selected>128³</option>
+                    <option value="256">256³ (WebGPU recommended)</option>
+                    <option value="512">512³ (WebGPU only)</option>
                 </select>
             </div>
             <div class="checkbox-container">
@@ -648,7 +649,8 @@
             
             // Update hybrid system
             if (hybridSystem) {
-                const systemStats = await hybridSystem.update(deltaTime);
+                // Use GPU-only pipeline if WebGPU is available
+                const systemStats = await hybridSystem.updateGPU(deltaTime);
                 Object.assign(stats, systemStats);
             }
             

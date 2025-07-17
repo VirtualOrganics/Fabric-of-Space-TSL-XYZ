@@ -357,79 +357,24 @@ export class AnalysisCompute {
     }
     
     /**
-     * Read back analysis results and update seed data
+     * DEPRECATED: We no longer read results back to CPU
+     * The analysis results stay on GPU and are consumed directly by PhysicsCompute
+     * This eliminates the GPU->CPU bottleneck that was killing performance
      */
-    async getResults(seedData) {
-        console.log('🔍 Reading back analysis results...');
-        
-        // Create staging buffer for reading results
-        const stagingBuffer = this.device.createBuffer({
-            label: 'Analysis Staging Buffer',
-            size: seedData.length * 8 * 4,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
-        
-        // Copy results to staging buffer
-        const commandEncoder = this.device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(
-            this.seedBuffer, 0,
-            stagingBuffer, 0,
-            seedData.length * 8 * 4
-        );
-        this.device.queue.submit([commandEncoder.finish()]);
-        
-        // Wait for copy to complete
-        await this.device.queue.onSubmittedWorkDone();
-        
-        // Map and read the buffer
-        await stagingBuffer.mapAsync(GPUMapMode.READ);
-        const resultData = new Float32Array(stagingBuffer.getMappedRange());
-        
-        // Also read acute count data
-        const acuteCountStagingBuffer = this.device.createBuffer({
-            label: 'Acute Count Staging Buffer',
-            size: seedData.length * 4,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
-        
-        const acuteCommandEncoder = this.device.createCommandEncoder();
-        acuteCommandEncoder.copyBufferToBuffer(
-            this.acuteCountBuffer, 0,
-            acuteCountStagingBuffer, 0,
-            seedData.length * 4
-        );
-        this.device.queue.submit([acuteCommandEncoder.finish()]);
-        
-        await this.device.queue.onSubmittedWorkDone();
-        await acuteCountStagingBuffer.mapAsync(GPUMapMode.READ);
-        const acuteCountData = new Uint32Array(acuteCountStagingBuffer.getMappedRange());
-        
-        // Update seed data with results
-        for (let i = 0; i < seedData.length; i++) {
-            const seed = seedData[i];
-            const offset = i * 8;
-            
-            // Update centroid
-            seed.centroid = seed.centroid || new THREE.Vector3();
-            seed.centroid.set(
-                resultData[offset + 3],
-                resultData[offset + 4],
-                resultData[offset + 5]
-            );
-            
-            // Update acute count from atomic buffer
-            seed.acuteCount = acuteCountData[i];
-            
-            // Update voxel count
-            seed.voxelCount = Math.round(resultData[offset + 7]);
-        }
-        
-        acuteCountStagingBuffer.unmap();
-        
-        stagingBuffer.unmap();
-        
-        console.log('✅ Analysis results read back successfully');
-        return seedData;
+    // async getResults(seedData) {
+    //     // NO LONGER NEEDED - Data stays on GPU!
+    // }
+
+    /**
+     * Get the analysis buffers for use by other compute passes
+     * @returns {Object} Object containing GPU buffers
+     */
+    getBuffers() {
+        return {
+            seedBuffer: this.seedBuffer,
+            acuteCountBuffer: this.acuteCountBuffer,
+            resultsBuffer: this.resultsBuffer
+        };
     }
     
     /**
@@ -556,8 +501,8 @@ export class AnalysisCompute {
                         }
                     }
                     
-                    // If we have 4+ unique cells, it's a junction
-                    if (uniqueCount >= 4) {
+                    // If we have 3+ unique cells, it's a junction (more lenient)
+                    if (uniqueCount >= 3) {
                         let junctionPos = toWorldSpace(coords) + vec3<f32>(0.5) / f32(uniforms.volumeSize) * 2.0;
                         
                         // Calculate angles between all pairs of seeds meeting at this junction

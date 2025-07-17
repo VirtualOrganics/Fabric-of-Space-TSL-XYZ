@@ -179,21 +179,18 @@ export class PhysicsCompute {
     }
     
     /**
-     * Run the physics compute pass
+     * Run the physics compute pass using GPU buffers directly
+     * @param {Object} analysisBuffers - GPU buffers from AnalysisCompute
+     * @param {Object} settings - Physics settings
+     * @param {number} deltaTime - Time delta
+     * @param {number} numSeeds - Number of seeds
      */
-    async compute(seedData, settings, deltaTime) {
-        console.log('⚡ Running physics compute pass...');
+    async compute(analysisBuffers, settings, deltaTime, numSeeds) {
+        console.log('⚡ Running physics compute pass (GPU-only)...');
         
-        const numSeeds = seedData.length;
-        
-        // Create buffers if needed
-        if (!this.seedBuffer || this.maxSeeds < numSeeds) {
-            this.maxSeeds = Math.max(numSeeds, this.maxSeeds);
-            this.createBuffers(this.maxSeeds);
-        }
-        
-        // Update seed buffer with current data
-        this.updateSeedBuffer(seedData);
+        // Use the analysis buffers directly - no CPU data transfer!
+        this.seedBuffer = analysisBuffers.seedBuffer;
+        this.acuteCountBuffer = analysisBuffers.acuteCountBuffer;
         
         // Clear statistics
         this.clearStatistics();
@@ -285,51 +282,20 @@ export class PhysicsCompute {
     }
     
     /**
-     * Read back physics results and update seed data
+     * DEPRECATED: We no longer read results back to CPU
+     * The physics results stay on GPU and are consumed directly by the renderer
+     * This eliminates the second GPU->CPU bottleneck
      */
-    async getResults(seedData) {
-        console.log('⚡ Reading back physics results...');
-        
-        // Create staging buffer for reading results
-        const stagingBuffer = this.device.createBuffer({
-            label: 'Physics Staging Buffer',
-            size: seedData.length * 8 * 4,
-            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        });
-        
-        // Copy results to staging buffer
-        const commandEncoder = this.device.createCommandEncoder();
-        commandEncoder.copyBufferToBuffer(
-            this.seedBuffer, 0,
-            stagingBuffer, 0,
-            seedData.length * 8 * 4
-        );
-        this.device.queue.submit([commandEncoder.finish()]);
-        
-        // Wait for copy to complete
-        await this.device.queue.onSubmittedWorkDone();
-        
-        // Map and read the buffer
-        await stagingBuffer.mapAsync(GPUMapMode.READ);
-        const resultData = new Float32Array(stagingBuffer.getMappedRange());
-        
-        // Update seed data with new positions
-        for (let i = 0; i < seedData.length; i++) {
-            const seed = seedData[i];
-            const offset = i * 8;
-            
-            // Update position
-            seed.position.set(
-                resultData[offset + 0],
-                resultData[offset + 1],
-                resultData[offset + 2]
-            );
-        }
-        
-        stagingBuffer.unmap();
-        
-        console.log('✅ Physics results read back successfully');
-        return seedData;
+    // async getResults(seedData) {
+    //     // NO LONGER NEEDED - Data stays on GPU!
+    // }
+    
+    /**
+     * Get the seed buffer for use by the renderer
+     * @returns {GPUBuffer} The updated seed buffer
+     */
+    getSeedBuffer() {
+        return this.seedBuffer;
     }
     
     /**

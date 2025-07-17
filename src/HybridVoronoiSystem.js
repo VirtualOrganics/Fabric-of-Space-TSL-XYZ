@@ -57,6 +57,9 @@ export class HybridVoronoiSystem {
             shrinkingCells: 0
         };
         
+        // Frame counter
+        this.frameCount = 0;
+        
         // Settings
         this.settings = {
             volumeResolution: 64,
@@ -311,7 +314,91 @@ export class HybridVoronoiSystem {
     }
     
     /**
-     * Main update loop - the heart of the hybrid system
+     * Main update loop - Pure GPU Pipeline
+     */
+    async updateGPU(deltaTime) {
+        if (!this.simulationRunning) return;
+        
+        const startTime = performance.now();
+        
+        try {
+            if (this.physicsEnabled && this.isWebGPURenderer()) {
+                // Pure GPU Pipeline - No CPU data transfers!
+                
+                // Pass 1: JFA Compute
+                const jfaStart = performance.now();
+                // For pure GPU pipeline, we need to pass the seed buffer from physics
+                if (this.physicsCompute && this.physicsCompute.getSeedBuffer()) {
+                    await this.gpuCompute.computeWithBuffer(this.physicsCompute.getSeedBuffer(), this.numPoints);
+                } else {
+                    // First frame - use initial seed data
+                    await this.gpuCompute.compute(this.seedData, this.numPoints);
+                }
+                this.performanceStats.jfaTime = Math.round(performance.now() - jfaStart);
+                
+                // Pass 2: Analysis Compute
+                const analysisStart = performance.now();
+                const jfaTexture = this.gpuCompute.getOutputTexture();
+                await this.analysisCompute.compute(jfaTexture, this.seedData);
+                this.performanceStats.analysisTime = Math.round(performance.now() - analysisStart);
+                
+                // Pass 3: Physics Compute
+                const physicsStart = performance.now();
+                const analysisBuffers = this.analysisCompute.getBuffers();
+                await this.physicsCompute.compute(
+                    analysisBuffers,
+                    this.settings.physicsSettings,
+                    deltaTime,
+                    this.numPoints
+                );
+                this.performanceStats.physicsTime = Math.round(performance.now() - physicsStart);
+                
+                // Pass 4: Update visualization (uses GPU buffers directly)
+                this.updateVisualizationGPU();
+                
+                // Optional: Get statistics (small data transfer for UI only)
+                if (this.frameCount % 10 === 0) { // Update stats every 10 frames
+                    const stats = await this.physicsCompute.getStatistics();
+                    this.performanceStats.growingCells = stats.growingCells;
+                    this.performanceStats.shrinkingCells = stats.shrinkingCells;
+                }
+            } else {
+                // Fallback to hybrid CPU/GPU pipeline
+                await this.update(deltaTime);
+            }
+            
+            this.performanceStats.totalTime = Math.round(performance.now() - startTime);
+            this.frameCount++;
+            
+        } catch (error) {
+            console.error('Update error:', error);
+            this.simulationRunning = false;
+        }
+    }
+    
+    /**
+     * Update visualization using GPU buffers directly
+     */
+    updateVisualizationGPU() {
+        // Update volume renderer with JFA texture
+        if (this.tslVolumeRenderer && this.gpuCompute) {
+            const jfaTexture = this.gpuCompute.getOutputTexture();
+            if (jfaTexture) {
+                this.tslVolumeRenderer.updateVolume(
+                    jfaTexture,
+                    this.settings.volumeResolution,
+                    Math.ceil(Math.sqrt(this.settings.volumeResolution))
+                );
+            }
+        }
+        
+        // For seed points visualization, we'll use instanced rendering
+        // with the GPU buffer directly (to be implemented)
+        // For now, skip the points update to avoid CPU readback
+    }
+
+    /**
+     * Main update loop - Hybrid CPU/GPU Pipeline (legacy)
      */
     async update(deltaTime) {
         if (!this.simulationRunning) {
@@ -325,12 +412,18 @@ export class HybridVoronoiSystem {
             if (this.physicsEnabled) {
                 // Step 1: Apply physics based on last frame's analysis
                 const physicsStart = performance.now();
-                if (this.isWebGPURenderer() && this.physicsCompute) {
-                    // WebGPU implementation - run physics compute pass
-                    await this.physicsCompute.compute(this.seedData, this.settings.physicsSettings, deltaTime);
-                    await this.physicsCompute.getResults(this.seedData);
+                if (this.isWebGPURenderer() && this.physicsCompute && this.analysisCompute) {
+                    // WebGPU implementation - run physics compute pass (GPU-only)
+                    const analysisBuffers = this.analysisCompute.getBuffers();
+                    await this.physicsCompute.compute(
+                        analysisBuffers, 
+                        this.settings.physicsSettings, 
+                        deltaTime,
+                        this.numPoints
+                    );
+                    // NO MORE getResults() - data stays on GPU!
                     
-                    // Get physics statistics from GPU
+                    // Get physics statistics from GPU (this is OK - it's just stats, not the main data)
                     const physicsStats = await this.physicsCompute.getStatistics();
                     this.performanceStats.growingCells = physicsStats.growingCells;
                     this.performanceStats.shrinkingCells = physicsStats.shrinkingCells;
@@ -340,8 +433,7 @@ export class HybridVoronoiSystem {
                 }
                 this.performanceStats.physicsTime = Math.round(performance.now() - physicsStart);
                 
-                // Step 2: Push updated seed data to GPU
-                this.updateSeedTexture();
+                // Step 2: NO LONGER NEEDED - seed data stays on GPU!
                 
                 // Step 3: Run JFA compute pass on GPU
                 const jfaStart = performance.now();
@@ -357,10 +449,10 @@ export class HybridVoronoiSystem {
                 // Step 4: Run analysis (WebGPU compute or CPU fallback)
                 const analysisStart = performance.now();
                 if (this.isWebGPURenderer() && this.analysisCompute) {
-                    // WebGPU implementation - run analysis compute pass
+                    // WebGPU implementation - run analysis compute pass (GPU-only)
                     const jfaTexture = this.gpuCompute.getOutputTexture();
                     await this.analysisCompute.compute(jfaTexture, this.seedData);
-                    await this.analysisCompute.getResults(this.seedData);
+                    // NO MORE getResults() - data stays on GPU!
                 } else {
                     // WebGL implementation - fallback to CPU analysis
                     const jfaOutput = this.gpuCompute.getOutputData();
