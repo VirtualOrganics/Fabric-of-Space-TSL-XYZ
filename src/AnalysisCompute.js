@@ -518,7 +518,7 @@ export class AnalysisCompute {
         return {
             seedBuffer: this.seedBuffer,
             acuteCountBuffer: this.acuteCountBuffer,
-            resultsBuffer: this.resultsBuffer
+            resultsBuffer: this.analysisResultsBuffer
         };
     }
     

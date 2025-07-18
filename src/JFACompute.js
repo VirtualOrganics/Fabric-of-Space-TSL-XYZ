@@ -112,7 +112,7 @@ export class JFACompute {
             @group(0) @binding(0) var<uniform> uniforms: Uniforms;
             @group(0) @binding(1) var<storage, read> seedData: array<SeedData>;
             @group(0) @binding(2) var outputTexture: texture_storage_3d<r32uint, write>;
-            @group(0) @binding(3) var inputTexture: texture_3d<u32>;
+            @group(0) @binding(3) var inputTexture: texture_storage_3d<r32uint, read>;
             
             // Distance calculation with weights
             fn calculateDistance(pos1: vec3<f32>, pos2: vec3<f32>, weight: f32) -> f32 {
@@ -179,7 +179,7 @@ export class JFACompute {
                 }
                 
                 // Write result - just the cell ID as a single uint
-                textureStore(outputTexture, coords3D, vec4u(bestSeedId, 0u, 0u, 0u));
+                textureStore(outputTexture, coords3D, vec4<u32>(bestSeedId, 0u, 0u, 0u));
             }
             
             // Initialize seeds
@@ -215,7 +215,7 @@ export class JFACompute {
                     }
                 }
                 
-                textureStore(outputTexture, coords3D, vec4u(seedId, 0u, 0u, 0u));
+                textureStore(outputTexture, coords3D, vec4<u32>(seedId, 0u, 0u, 0u));
             }
         `;
         
@@ -296,8 +296,9 @@ export class JFACompute {
                     {
                         binding: 3,
                         visibility: GPUShaderStage.COMPUTE,
-                        texture: { 
-                            sampleType: 'uint',
+                        storageTexture: {
+                            access: 'read-only',
+                            format: 'r32uint',
                             viewDimension: '3d'
                         },
                     },
