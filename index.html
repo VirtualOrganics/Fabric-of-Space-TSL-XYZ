@@ -401,8 +401,7 @@
     <!-- Main Application Script -->
     <script type="module">
         import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js';
-        // This adds WebGPURenderer to THREE:
-        import 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.webgpu.js';
+        import { WebGPURenderer } from 'https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/renderers/webgpu/WebGPURenderer.js';
         import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/controls/OrbitControls.js';
         import { HybridVoronoiSystem } from './src/HybridVoronoiSystem.js';
         
@@ -472,7 +471,7 @@
             
             // Always use WebGPU
             console.log('🔧 Creating WebGPU renderer…');
-            renderer = new THREE.WebGPURenderer({
+            renderer = new WebGPURenderer({
                 antialias: true,
                 powerPreference: 'high-performance'
             });
