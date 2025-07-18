@@ -407,6 +407,10 @@
         // Import WebGPU renderer from the official build
         import { WebGPURenderer } from 'https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.webgpu.js';
         
+        // Debug: Check if WebGPURenderer is loaded
+        console.log('🔍 WebGPURenderer imported:', typeof WebGPURenderer);
+        console.log('🔍 WebGPURenderer constructor:', WebGPURenderer);
+        
         // Global application state
         let scene, camera, renderer, controls;
         let hybridSystem;
