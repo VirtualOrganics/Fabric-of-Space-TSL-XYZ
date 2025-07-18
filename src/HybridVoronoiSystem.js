@@ -486,7 +486,27 @@ export class HybridVoronoiSystem {
                     console.log('🔄 Using WebGPU AnalysisCompute (GPU-only)');
                     const jfaTexture = this.gpuCompute.getOutputTexture();
                     await this.analysisCompute.compute(jfaTexture, this.seedData);
-                    // NO MORE getResults() - data stays on GPU!
+                    
+                    // ─── EVERY N FRAMES: pull small data back for legend/points/debug ───
+                    if (this.frameCount % 10 === 0) {
+                        const results = await this.analysisCompute.getResults();
+                        // 1) update your seedData objects
+                        for (let i = 0; i < this.numPoints; i++) {
+                            this.seedData[i].acuteCount = results.acuteData[i] || 0;
+                            // also update centroids for debug visuals
+                            const base = i * 4;
+                            this.seedData[i].centroid = {
+                                x: results.centroidData[base + 0] || this.seedData[i].position.x,
+                                y: results.centroidData[base + 1] || this.seedData[i].position.y,
+                                z: results.centroidData[base + 2] || this.seedData[i].position.z
+                            };
+                        }
+                        // 2) update legend & debug visuals
+                        this.colorLegend.updateLegend(this.seedData);
+                        if (this.settings.showDebugVisuals) {
+                            this.updateDebugVisuals();
+                        }
+                    }
                 } else {
                     // WebGL implementation - use GPU AnalysisCompute instead of CPU analyzer
                     console.log('🔄 Using GPU AnalysisCompute instead of CPU analyzer');
