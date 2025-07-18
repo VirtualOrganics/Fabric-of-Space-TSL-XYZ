@@ -212,25 +212,39 @@ export class ColorLegend {
      */
     updateLegend(seedData) {
         if (!this.enabled || !seedData) return;
-        
-        // Reset counts
-        this.colorRanges.forEach(range => range.count = 0);
-        
-        // Count cells in each range
+
+        // 1) Compute real max acute count
+        const counts = seedData.map(s => s.acuteCount || 0);
+        const maxCount = counts.length ? Math.max(...counts) : 0;
+
+        // 2) Build N equal buckets
+        const N = this.colorRanges.length;
+        const step = Math.ceil((maxCount + 1) / N);
+
+        // Preserve each bucket's color & name, reset min/max and count
+        this.colorRanges = this.colorRanges.map((range, i) => ({
+            name:  range.name,
+            color: range.color,
+            min:   i * step,
+            max:   (i === N - 1) ? Infinity : ((i + 1) * step - 1),
+            count: 0
+        }));
+
+        // 3) Re‑count seeds into new buckets
         seedData.forEach(seed => {
-            const acuteCount = seed.acuteCount || 0;
-            const range = this.colorRanges.find(r => acuteCount >= r.min && acuteCount <= r.max);
-            if (range) {
-                range.count++;
-            }
+            const c = seed.acuteCount || 0;
+            // Determine which bucket index
+            let idx = Math.floor(c / step);
+            if (idx >= N) idx = N - 1;
+            this.colorRanges[idx].count++;
         });
-        
+
         this.totalCells = seedData.length;
-        
-        // Update UI
+
+        // 4) Redraw UI
         this.updateLegendContent();
-        
-        console.log(`📊 Legend updated: ${this.totalCells} cells distributed across ranges`);
+
+        console.log(`📊 Legend updated: ${this.totalCells} cells, maxCount=${maxCount}, step=${step}`);
     }
     
     /**

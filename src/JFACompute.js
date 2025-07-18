@@ -404,18 +404,23 @@ export class JFACompute {
         }
         
         // Prepare seed data for GPU
+        // --> Normalize world‑space [-1,1] into [0,1] so every seed covers voxels
         const seedArray = new Float32Array(numPoints * 8);
         for (let i = 0; i < numPoints; i++) {
             const seed = seedData[i];
             const offset = i * 8;
             
-            // Position (vec3)
-            seedArray[offset + 0] = seed.x || 0;
-            seedArray[offset + 1] = seed.y || 0;
-            seedArray[offset + 2] = seed.z || 0;
+            // Normalize from [-1,1] → [0,1]
+            const nx = ((seed.x ?? 0) + 1) * 0.5;
+            const ny = ((seed.y ?? 0) + 1) * 0.5;
+            const nz = ((seed.z ?? 0) + 1) * 0.5;
+            
+            seedArray[offset + 0] = nx;
+            seedArray[offset + 1] = ny;
+            seedArray[offset + 2] = nz;
             
             // Weight (float)
-            seedArray[offset + 3] = seed.weight || 1.0;
+            seedArray[offset + 3] = seed.weight ?? 1.0;
             
             // Cell ID (u32, stored as float)
             seedArray[offset + 4] = i;
