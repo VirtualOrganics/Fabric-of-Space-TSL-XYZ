@@ -401,8 +401,9 @@
     <!-- Main Application Script -->
     <script type="module">
         import * as THREE from 'three';
-        // Pull in the WebGPU plugin so THREE.WebGPURenderer is defined
-        import 'three/webgpu';
+        // Pull in the WebGPU renderer and TSL support as named exports
+        import { WebGPURenderer } from 'three/webgpu';
+        import 'three/tsl';  // if you haven't already for TSLVolumeRenderer
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { HybridVoronoiSystem } from './src/HybridVoronoiSystem.js';
         
@@ -472,7 +473,7 @@
             
             // Always use WebGPU
             console.log('🔧 Creating WebGPU renderer…');
-            renderer = new THREE.WebGPURenderer({
+            renderer = new WebGPURenderer({
                 antialias: true,
                 powerPreference: 'high-performance'
             });
