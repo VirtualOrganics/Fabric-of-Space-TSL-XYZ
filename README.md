@@ -1,4 +1,4 @@
-# Fabric of Space - TSL Edition
+# Fabric of Space TSL XYZ
 
 **A WebGPU-accelerated 3D Voronoi physics system using Three.js Shader Language (TSL)**
 
@@ -6,7 +6,7 @@
 
 ## 🚀 Live Demo
 
-**[Try the Live Demo](https://virtualorganics.github.io/Fabric-of-Space-TSL/)**
+**[Try the Live Demo](https://virtualorganics.github.io/Fabric-of-Space-TSL-XYZ/)**
 
 ## 🎉 Major Update: True GPU-Only Pipeline Achieved!
 
@@ -156,7 +156,7 @@ The project is designed for **GitHub Pages** deployment:
 
 1. **Enable GitHub Pages** in repository settings
 2. **Set source** to `main` branch
-3. **Access live demo** at `https://virtualorganics.github.io/Fabric-of-Space-TSL/`
+3. **Access live demo** at `https://virtualorganics.github.io/Fabric-of-Space-TSL-XYZ/`
 
 ## 🎮 Usage
 
