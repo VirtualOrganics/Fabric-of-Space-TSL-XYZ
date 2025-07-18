@@ -38,41 +38,29 @@ export class JFACompute {
         console.log('🚀 Initializing JFA compute pipeline...');
         
         try {
-            // Check if we have a WebGPU renderer
-            if (this.renderer.getDevice) {
-                // WebGPU renderer
-                this.device = this.renderer.getDevice();
-                if (!this.device) {
-                    throw new Error('WebGPU device not available');
-                }
-                
-                // Calculate atlas parameters
-                this.updateVolumeParameters();
-                
-                // Create compute shader
-                await this.createComputeShader();
-                
-                // Create storage resources
-                this.createStorageResources();
-                
-                // Create compute pipeline
-                this.createComputePipeline();
-                
-                console.log('✅ JFA WebGPU compute pipeline initialized successfully');
-            } else {
-                // WebGL renderer - disable GPU compute
-                console.warn('⚠️ WebGL renderer detected - GPU compute disabled');
-                this.device = null;
-                this.isWebGL = true;
-                console.log('✅ JFA compute pipeline disabled (WebGL mode)');
+            // Get WebGPU device for TSL
+            this.device = this.renderer.getDevice();
+            if (!this.device) {
+                throw new Error('WebGPU device not available for TSL');
             }
             
+            // Calculate atlas parameters
+            this.updateVolumeParameters();
+            
+            // Create compute shader
+            await this.createComputeShader();
+            
+            // Create storage resources
+            this.createStorageResources();
+            
+            // Create compute pipeline
+            this.createComputePipeline();
+            
+            console.log('✅ JFA WebGPU compute pipeline initialized successfully for TSL');
+            
         } catch (error) {
-            console.error('❌ Failed to initialize JFA compute pipeline:', error);
-            // Don't throw error, just disable GPU compute
-            this.device = null;
-            this.isWebGL = true;
-            console.log('✅ JFA compute pipeline disabled due to error');
+            console.error('❌ Failed to initialize JFA compute pipeline for TSL:', error);
+            throw error;
         }
     }
     
@@ -364,12 +352,7 @@ export class JFACompute {
      * Run the JFA compute pass
      */
     async compute(seedData, numPoints) {
-        if (this.isWebGL) {
-            console.log('⚠️ GPU compute disabled in WebGL mode');
-            return;
-        }
-        
-        console.log(`🖥️ Running JFA compute pass with ${numPoints} seeds...`);
+        console.log(`🖥️ Running JFA compute pass with ${numPoints} seeds for TSL...`);
         
         const startTime = performance.now();
         
@@ -389,12 +372,7 @@ export class JFACompute {
      * @param {number} numPoints - Number of seeds
      */
     async computeWithBuffer(seedBuffer, numPoints) {
-        if (this.isWebGL) {
-            console.log('⚠️ GPU compute disabled in WebGL mode');
-            return;
-        }
-        
-        console.log(`🖥️ Running JFA compute pass with GPU buffer (${numPoints} seeds)...`);
+        console.log(`🖥️ Running JFA compute pass with GPU buffer (${numPoints} seeds) for TSL...`);
         
         const startTime = performance.now();
         
@@ -424,11 +402,6 @@ export class JFACompute {
      * Update seed buffer with new data
      */
     async updateSeedBuffer(seedData, numPoints) {
-        if (this.isWebGL) {
-            console.log('⚠️ GPU buffer update disabled in WebGL mode');
-            return;
-        }
-        
         // Create or update seed buffer
         const seedBufferSize = Math.max(numPoints, 1) * 32; // 8 floats per seed
         
@@ -494,11 +467,6 @@ export class JFACompute {
      * Run JFA passes with decreasing step sizes
      */
     async runJFAPasses() {
-        if (this.isWebGL) {
-            console.log('⚠️ GPU compute disabled in WebGL mode');
-            return;
-        }
-        
         const commandEncoder = this.device.createCommandEncoder();
         
         // Create bind group

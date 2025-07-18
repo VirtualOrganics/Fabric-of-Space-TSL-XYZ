@@ -41,10 +41,10 @@ export class AnalysisCompute {
     async init() {
         console.log('🔍 Initializing AnalysisCompute...');
         
-        // Get WebGPU device
+        // Get WebGPU device for TSL
         this.device = this.renderer.getDevice();
         if (!this.device) {
-            throw new Error('WebGPU device not available');
+            throw new Error('WebGPU device not available for TSL');
         }
         
         // Create compute shader module with error handling
@@ -230,7 +230,7 @@ export class AnalysisCompute {
      * Run the analysis compute pass
      */
     async compute(jfaTexture, seedData) {
-        console.log('🔍 Running analysis compute pass...');
+        console.log('🔍 Running analysis compute pass for TSL...');
         
         const numSeeds = seedData.length;
         
