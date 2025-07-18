@@ -470,33 +470,19 @@
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
             camera.position.set(2, 2, 2);
             
-            // Try WebGPU first
-            if (navigator.gpu && THREE.WebGPURenderer) {
-                console.log('🔧 Attempting to create WebGPU renderer...');
-                renderer = new THREE.WebGPURenderer({ 
-                    antialias: true,
-                    powerPreference: 'high-performance'
-                });
-                await renderer.init();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                renderer.setPixelRatio(window.devicePixelRatio);
-                document.getElementById('sceneContainer').appendChild(renderer.domElement);
-                
-                isWebGPUReady = true;
-                console.log('✅ WebGPU renderer initialized successfully!');
-            } else {
-                console.log('🔧 WebGPU unavailable, falling back to WebGL renderer...');
-                renderer = new THREE.WebGLRenderer({ 
-                    antialias: true,
-                    powerPreference: 'high-performance'
-                });
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                renderer.setPixelRatio(window.devicePixelRatio);
-                document.getElementById('sceneContainer').appendChild(renderer.domElement);
+            // Always use WebGPU
+            console.log('🔧 Creating WebGPU renderer…');
+            renderer = new THREE.WebGPURenderer({
+                antialias: true,
+                powerPreference: 'high-performance'
+            });
+            await renderer.init();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('sceneContainer').appendChild(renderer.domElement);
 
-                isWebGPUReady = false;  // ensure we know GPU is not available
-                console.log('✅ WebGL renderer initialized successfully!');
-            }
+            isWebGPUReady = true;
+            console.log('✅ WebGPU renderer initialized successfully!');
             
             // Make scene and renderer globally accessible
             window.scene = scene;
@@ -663,14 +649,8 @@
             controls.update();
             
             if (hybridSystem) {
-                let systemStats;
-                if (isWebGPUReady) {
-                    // Pure WebGPU compute loop
-                    systemStats = await hybridSystem.updateGPU(deltaTime);
-                } else {
-                    // Fallback hybrid CPU/GPU loop
-                    systemStats = await hybridSystem.update(deltaTime);
-                }
+                // Always run the GPU‐only pipeline
+                const systemStats = await hybridSystem.updateGPU(deltaTime);
                 Object.assign(stats, systemStats);
             }
             
