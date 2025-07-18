@@ -401,6 +401,8 @@
     <!-- Main Application Script -->
     <script type="module">
         import * as THREE from 'three';
+        // Pull in the WebGPU plugin so THREE.WebGPURenderer is defined
+        import 'three/webgpu';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { HybridVoronoiSystem } from './src/HybridVoronoiSystem.js';
         
@@ -654,19 +656,21 @@
         async function animate() {
             animationId = requestAnimationFrame(animate);
             
-            // Only render if WebGPU is ready
-            if (!isWebGPUReady) return;
-            
             const deltaTime = clock.getDelta();
             const currentTime = performance.now();
             
             // Update controls
             controls.update();
             
-            // Update hybrid system
             if (hybridSystem) {
-                // Use GPU-only pipeline if WebGPU is available
-                const systemStats = await hybridSystem.updateGPU(deltaTime);
+                let systemStats;
+                if (isWebGPUReady) {
+                    // Pure WebGPU compute loop
+                    systemStats = await hybridSystem.updateGPU(deltaTime);
+                } else {
+                    // Fallback hybrid CPU/GPU loop
+                    systemStats = await hybridSystem.update(deltaTime);
+                }
                 Object.assign(stats, systemStats);
             }
             
