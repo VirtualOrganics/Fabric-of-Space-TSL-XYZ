@@ -200,18 +200,28 @@ export class JFACompute {
                 // Initialize with invalid seed ID (max uint)
                 var seedId = 4294967295u; // Max uint32 = no seed
                 
-                // Check if this voxel contains a seed
+                // 1) Explicitly plant each seed at its nearest voxel
                 for (var i = 0u; i < uniforms.numPoints; i++) {
-                    let seedPos = seedData[i].position;
-                    let seedWeight = seedData[i].weight;
-                    
-                    // Check if seed is close to this voxel
-                    let distance = calculateDistance(currentPos, seedPos, seedWeight);
-                    let voxelSize = 1.0 / f32(uniforms.volumeSize);
-                    
-                    if (distance < voxelSize) {
+                    let seedPos = seedData[i].position;         // in [0,1]
+                    // Map seedPos→voxel coords in [0, volumeSize−1]
+                    let vc = vec3<i32>(seedPos * f32(uniforms.volumeSize - 1u) + vec3<f32>(0.5));
+
+                    if (coords3D == vc) {
                         seedId = i;
                         break;
+                    }
+                }
+                // 2) Fallback: if still no seed, use your old distance test
+                if (seedId == 4294967295u) {
+                    let voxelSize = 1.0 / f32(uniforms.volumeSize);
+                    for (var i = 0u; i < uniforms.numPoints; i++) {
+                        let seedPos = seedData[i].position;
+                        let seedWeight = seedData[i].weight;
+                        let distance = calculateDistance(currentPos, seedPos, seedWeight);
+                        if (distance < voxelSize) {
+                            seedId = i;
+                            break;
+                        }
                     }
                 }
                 
