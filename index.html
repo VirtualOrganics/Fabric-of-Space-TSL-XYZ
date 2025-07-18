@@ -436,6 +436,9 @@
                 hybridSystem = new HybridVoronoiSystem();
                 await hybridSystem.init();
                 
+                // Expose to window for debugging
+                window.hybridSystem = hybridSystem;
+                
                 // Set up UI event listeners
                 setupUI();
                 
