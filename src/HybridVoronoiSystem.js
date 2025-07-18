@@ -460,13 +460,21 @@ export class HybridVoronoiSystem {
                     await this.analysisCompute.compute(jfaTexture, this.seedData);
                     // NO MORE getResults() - data stays on GPU!
                 } else {
-                    // WebGL implementation - fallback to CPU analysis
-                    console.log('🔄 Falling back to CPU VoronoiAnalyzer', {
-                        isWebGPU: this.isWebGPURenderer(),
-                        hasAnalysisCompute: !!this.analysisCompute
-                    });
-                    const jfaOutput = this.gpuCompute.getOutputData();
-                    this.analyzer.analyze(jfaOutput, this.seedData, this.settings.volumeResolution);
+                    // WebGL implementation - use GPU AnalysisCompute instead of CPU analyzer
+                    console.log('🔄 Using GPU AnalysisCompute instead of CPU analyzer');
+                    const jfaTexture = this.gpuCompute.getOutputTexture();
+                    await this.analysisCompute.compute(jfaTexture, this.seedData);
+                    const { acuteData, centroidData } = await this.analysisCompute.getResults();
+                    
+                    // Update seedData with GPU results (same as CPU analyzer did)
+                    for (let i = 0; i < this.seedData.length; i++) {
+                        this.seedData[i].acuteCount = acuteData[i] || 0;
+                        this.seedData[i].centroid = {
+                            x: centroidData[i * 4 + 0] || this.seedData[i].x,
+                            y: centroidData[i * 4 + 1] || this.seedData[i].y,
+                            z: centroidData[i * 4 + 2] || this.seedData[i].z
+                        };
+                    }
                 }
                 this.performanceStats.analysisTime = Math.round(performance.now() - analysisStart);
                 
