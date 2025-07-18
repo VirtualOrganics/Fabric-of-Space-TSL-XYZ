@@ -341,6 +341,27 @@ export class HybridVoronoiSystem {
                 const jfaTexture = this.gpuCompute.getOutputTexture();
                 await this.analysisCompute.compute(jfaTexture, this.seedData);
                 this.performanceStats.analysisTime = Math.round(performance.now() - analysisStart);
+
+                // ─── EVERY N FRAMES: pull small data back for legend/points/debug ───
+                if (this.frameCount % 10 === 0) {
+                    const results = await this.analysisCompute.getResults();
+                    // 1) update your seedData objects
+                    for (let i = 0; i < this.numPoints; i++) {
+                        this.seedData[i].acuteCount = results.acuteData[i] || 0;
+                        // also update centroids for debug visuals, if you like
+                        const base = i * 4;
+                        this.seedData[i].centroid = {
+                            x: results.centroidData[base + 0] || this.seedData[i].position.x,
+                            y: results.centroidData[base + 1] || this.seedData[i].position.y,
+                            z: results.centroidData[base + 2] || this.seedData[i].position.z
+                        };
+                    }
+                    // 2) update legend & debug visuals
+                    this.colorLegend.updateLegend(this.seedData);
+                    if (this.settings.showDebugVisuals) {
+                        this.updateDebugVisuals();
+                    }
+                }
                 
                 // Pass 3: Physics Compute
                 const physicsStart = performance.now();
@@ -353,8 +374,15 @@ export class HybridVoronoiSystem {
                 );
                 this.performanceStats.physicsTime = Math.round(performance.now() - physicsStart);
                 
-                // Pass 4: Update visualization (uses GPU buffers directly)
+                // Pass 4: Update visualization
                 this.updateVisualizationGPU();
+                // Also update seed‐point meshes and polygon edges
+                if (this.settings.showPoints) {
+                    this.updatePointsVisualization();
+                }
+                if (this.settings.showEdges) {
+                    this.updateCellVisualization();
+                }
                 
                 // Optional: Get statistics (small data transfer for UI only)
                 if (this.frameCount % 10 === 0) { // Update stats every 10 frames
