@@ -771,6 +771,54 @@ export class HybridVoronoiSystem {
     }
     
     /**
+     * Debug function to test analysis compute results
+     */
+    async testAnalysisCompute() {
+        if (!this.isWebGPURenderer() || !this.analysisCompute) {
+            console.log('⚠️  WebGPU analysis compute not available - skipping test');
+            return;
+        }
+
+        console.log('🧪 Testing analysis compute shader...');
+        
+        try {
+            // Run JFA first to get texture data
+            await this.gpuCompute.compute(this.seedData, this.numPoints);
+            
+            // Run analysis compute
+            const jfaTexture = this.gpuCompute.getOutputTexture();
+            await this.analysisCompute.compute(jfaTexture, this.seedData);
+            
+            // Read back results for debugging
+            const results = await this.analysisCompute.getResults();
+            
+            console.log('🧪 Analysis compute test completed');
+            console.log('📊 Results summary:');
+            console.log(`  Total acute angles detected: ${results.totalAcuteCount}`);
+            console.log(`  Seeds with acute angles: ${results.nonZeroSeeds}/${this.numPoints}`);
+            console.log(`  Max acute count per seed: ${results.maxAcuteCount}`);
+            
+            // Update color legend if we have results
+            if (results.totalAcuteCount > 0 && this.colorLegend) {
+                // Create mock seed data with acute counts for color legend
+                const mockSeeds = this.seedData.map((seed, index) => ({
+                    ...seed,
+                    acuteCount: results.acuteData[index] || 0
+                }));
+                
+                this.colorLegend.updateLegend(mockSeeds);
+                console.log('🎨 Color legend updated with analysis results');
+            }
+            
+            return results;
+            
+        } catch (error) {
+            console.error('❌ Analysis compute test failed:', error);
+            throw error;
+        }
+    }
+    
+    /**
      * Clean up resources
      */
     dispose() {
