@@ -440,6 +440,11 @@ export class HybridVoronoiSystem {
                 if (this.isWebGPURenderer()) {
                     // WebGPU implementation uses seed data directly
                     await this.gpuCompute.compute(this.seedData, this.numPoints);
+                    
+                    // DEBUG: Check voxel counts per seed
+                    if (this.gpuCompute.getVoxelCounts) {
+                        await this.gpuCompute.getVoxelCounts(this.numPoints);
+                    }
                 } else {
                     // WebGL implementation uses seed texture
                     this.gpuCompute.compute(this.seedTexture, this.seedTextureSize, this.numPoints);
@@ -450,11 +455,16 @@ export class HybridVoronoiSystem {
                 const analysisStart = performance.now();
                 if (this.isWebGPURenderer() && this.analysisCompute) {
                     // WebGPU implementation - run analysis compute pass (GPU-only)
+                    console.log('🔄 Using WebGPU AnalysisCompute (GPU-only)');
                     const jfaTexture = this.gpuCompute.getOutputTexture();
                     await this.analysisCompute.compute(jfaTexture, this.seedData);
                     // NO MORE getResults() - data stays on GPU!
                 } else {
                     // WebGL implementation - fallback to CPU analysis
+                    console.log('🔄 Falling back to CPU VoronoiAnalyzer', {
+                        isWebGPU: this.isWebGPURenderer(),
+                        hasAnalysisCompute: !!this.analysisCompute
+                    });
                     const jfaOutput = this.gpuCompute.getOutputData();
                     this.analyzer.analyze(jfaOutput, this.seedData, this.settings.volumeResolution);
                 }

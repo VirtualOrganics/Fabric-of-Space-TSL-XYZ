@@ -424,6 +424,14 @@ export class JFACompute {
             const nx = ((seed.x ?? 0) + 1) * 0.5;
             const ny = ((seed.y ?? 0) + 1) * 0.5;
             const nz = ((seed.z ?? 0) + 1) * 0.5;
+            // DEBUG: warn if outside [0,1]
+            if (nx < 0 || nx > 1 || ny < 0 || ny > 1 || nz < 0 || nz > 1) {
+                console.warn(
+                  `🛑 Seed ${i} normalized out of bounds →`,
+                  `nx=${nx.toFixed(3)}, ny=${ny.toFixed(3)}, nz=${nz.toFixed(3)}`,
+                  `original=(x:${seed.x},y:${seed.y},z:${seed.z})`
+                );
+            }
             
             seedArray[offset + 0] = nx;
             seedArray[offset + 1] = ny;
@@ -557,6 +565,63 @@ export class JFACompute {
         return result;
     }
     
+    /**
+     * Get 3D texture data for debugging voxel counts
+     */
+    async getVoxelCounts(numSeeds) {
+        if (!this.outputTexture) {
+            throw new Error('Output texture not available');
+        }
+        
+        // Create a buffer to read the 3D texture data
+        const volumeSize = this.volumeSize;
+        const textureSize = volumeSize * volumeSize * volumeSize * 4 * 4; // RGBA32Uint
+        const readBuffer = this.device.createBuffer({
+            size: textureSize,
+            usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+        });
+        
+        // Copy 3D texture to buffer
+        const commandEncoder = this.device.createCommandEncoder();
+        commandEncoder.copyTextureToBuffer(
+            { texture: this.outputTexture },
+            { 
+                buffer: readBuffer, 
+                bytesPerRow: volumeSize * 4 * 4,
+                rowsPerImage: volumeSize
+            },
+            { width: volumeSize, height: volumeSize, depthOrArrayLayers: volumeSize }
+        );
+        
+        this.device.queue.submit([commandEncoder.finish()]);
+        
+        // Map and read the buffer
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const arrayBuffer = readBuffer.getMappedRange();
+        const data = new Uint32Array(arrayBuffer);
+        
+        // Count voxels per seed
+        const counts = new Uint32Array(numSeeds);
+        for (let i = 0; i < data.length; i += 4) { // Skip to every 4th element (R channel)
+            const seedId = data[i];
+            if (seedId < numSeeds && seedId !== 4294967295) { // Exclude invalid seed ID
+                counts[seedId]++;
+            }
+        }
+        
+        readBuffer.unmap();
+        readBuffer.destroy();
+        
+        console.log('📦 JFA voxel counts per seed:', Array.from(counts));
+        
+        // Log any zeros
+        counts.forEach((c, i) => {
+            if (c === 0) console.warn(`⚠️ Seed ${i} still has 0 voxels`);
+        });
+        
+        return counts;
+    }
+
     /**
      * Get performance stats
      */
